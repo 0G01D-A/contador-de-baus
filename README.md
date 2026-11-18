@@ -51,6 +51,8 @@ A zona tem de ficar no mesmo sítio do ecrã. Volta a calibrar se mudares a reso
 
 ### Deteção por som
 
+Se já tens um ficheiro com o som de abertura, clica em **Importar WAV** e escolhe um WAV de 0,6 a 7 segundos. Ajusta **Início** e **Fim**, ouve o trecho e clica em **Guardar amostra**. O ficheiro é processado no teu PC. O instalador não inclui efeitos sonoros do Fortnite.
+
 1. No Fortnite, encontra um baú e deixa-o fechado. Confirma que o jogo usa a saída predefinida do Windows.
 2. Na aplicação, escolhe **Gravar som de baú**. Depois de confirmares, tens 5 segundos para voltar ao jogo e 7 segundos de gravação. Abre um baú durante a gravação.
 3. Volta à aplicação. Ajusta **Início** e **Fim** de forma a incluir o som da abertura com o mínimo de ruído de fundo. Confirma com **Ouvir trecho** e clica em **Guardar amostra**.

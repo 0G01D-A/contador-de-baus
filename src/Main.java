@@ -34,6 +34,7 @@ public final class Main {
     private final JButton resetButton = new JButton("Repor contagem");
     private final JButton reviewButton = new JButton("Rever amostras");
     private final JButton previewButton = new JButton("Ouvir áudio recebido");
+    private final JButton importButton = new JButton("Importar WAV");
     private final JButton imageButton = new JButton("Calibrar imagem");
     private final JComboBox<Mode> detectionMode = new JComboBox<>(Mode.values());
     private final RoomPanel group = new RoomPanel();
@@ -187,8 +188,10 @@ public final class Main {
         audioActions.setAlignmentX(Component.LEFT_ALIGNMENT);
         reviewButton.addActionListener(event -> reviewSamples());
         previewButton.addActionListener(event -> previewReceivedAudio());
+        importButton.addActionListener(event -> importSample());
         audioActions.add(reviewButton);
         audioActions.add(previewButton);
+        audioActions.add(importButton);
         content.add(audioActions);
         var modes = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         modes.setOpaque(false);
@@ -351,6 +354,7 @@ public final class Main {
         calibrateButton.setEnabled(!recording);
         reviewButton.setEnabled(!recording && count > 0);
         previewButton.setEnabled(!recording);
+        importButton.setEnabled(!recording);
         imageButton.setEnabled(!recording);
         detectionMode.setEnabled(!recording);
     }
@@ -529,6 +533,33 @@ public final class Main {
         startTask(sender -> {
             try (var audio = new WindowsAudio()) {
                 recordAudio(audio, sender, seconds, completion);
+            }
+        });
+    }
+
+    private void importSample() {
+        var chooser = new JFileChooser();
+        chooser.setDialogTitle("Escolher amostra WAV");
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("Áudio WAV", "wav"));
+        chooser.setAcceptAllFileFilterUsed(false);
+        if (chooser.showOpenDialog(window) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        Path file = chooser.getSelectedFile().toPath();
+        boolean resume = task != null;
+        stopTask();
+        recording = true;
+        status.setText("A importar a amostra…");
+        startTask(sender -> {
+            try {
+                float[] clip = WavSample.read(file);
+                post(sender, () -> finishCalibration(clip, resume));
+            } catch (IOException error) {
+                post(sender, () -> {
+                    stopTask();
+                    showError(error.getMessage());
+                    resumeAfterPreview(resume);
+                });
             }
         });
     }
