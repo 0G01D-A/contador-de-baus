@@ -13,7 +13,8 @@ import static java.lang.foreign.ValueLayout.JAVA_INT;
 
 final class WindowsHotkey implements AutoCloseable {
     private static final int ID = 1;
-    private static final int VK_F9 = 0x78;
+    static final int VK_F8 = 0x77;
+    static final int VK_F9 = 0x78;
     private static final int MOD_NOREPEAT = 0x4000;
     private static final int WM_HOTKEY = 0x0312;
     private static final int PM_REMOVE = 1;
@@ -21,16 +22,16 @@ final class WindowsHotkey implements AutoCloseable {
     private final LinkedBlockingQueue<Boolean> requests = new LinkedBlockingQueue<>();
     private final Thread worker;
 
-    WindowsHotkey(Runnable pressed, Consumer<Boolean> registrationResult) {
-        worker = Thread.ofPlatform().daemon().name("Windows F9 shortcut")
-                .start(() -> listen(pressed, registrationResult));
+    WindowsHotkey(int key, Runnable pressed, Consumer<Boolean> registrationResult) {
+        worker = Thread.ofPlatform().daemon().name("Windows shortcut " + key)
+                .start(() -> listen(key, pressed, registrationResult));
     }
 
     void setEnabled(boolean enabled) {
         requests.add(enabled);
     }
 
-    private void listen(Runnable pressed, Consumer<Boolean> registrationResult) {
+    private void listen(int key, Runnable pressed, Consumer<Boolean> registrationResult) {
         try (Arena arena = Arena.ofConfined()) {
             var user32 = SymbolLookup.libraryLookup("user32.dll", arena);
             var linker = Linker.nativeLinker();
@@ -48,7 +49,7 @@ final class WindowsHotkey implements AutoCloseable {
                     Boolean requested = registered ? requests.poll(25, TimeUnit.MILLISECONDS) : requests.take();
                     if (requested != null && requested != registered) {
                         if (requested) {
-                            registered = (int) register.invokeExact(NULL, ID, MOD_NOREPEAT, VK_F9) != 0;
+                            registered = (int) register.invokeExact(NULL, ID, MOD_NOREPEAT, key) != 0;
                             registrationResult.accept(registered);
                         } else {
                             int ignored = (int) unregister.invokeExact(NULL, ID);
@@ -72,7 +73,7 @@ final class WindowsHotkey implements AutoCloseable {
             Thread.currentThread().interrupt();
         } catch (Throwable failure) {
             registrationResult.accept(false);
-            System.err.println("Não foi possível registar o atalho F9: " + failure);
+            System.err.println("Não foi possível registar a tecla " + key + ": " + failure);
         }
     }
 

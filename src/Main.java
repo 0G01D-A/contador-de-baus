@@ -1,6 +1,3 @@
-import javax.sound.sampled.AudioFormat;
-import javax.sound.sampled.AudioSystem;
-import javax.sound.sampled.Clip;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import java.awt.*;
@@ -20,6 +17,7 @@ public final class Main {
     private static final Color MUTED = new Color(78, 91, 114);
     private static final Color BLUE = new Color(38, 74, 182);
     private static final int RECORD_SECONDS = 7;
+    private static final int PREVIEW_SECONDS = 5;
     private final JFrame window = new JFrame("Contador de Baús");
     private final JLabel sessionLabel = label("0", 42, BLUE);
     private final JLabel totalLabel = label("0", 42, INK);
@@ -31,7 +29,10 @@ public final class Main {
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
     private final JButton subtractButton = new JButton("Remover 1 baú");
-    private final JCheckBox shortcut = new JCheckBox("Atalho global F9 (+1)", true);
+    private final JButton reviewButton = new JButton("Rever amostras");
+    private final JButton previewButton = new JButton("Ouvir áudio recebido");
+    private final JCheckBox addShortcut = new JCheckBox("Atalho global F9 (+1)", true);
+    private final JCheckBox subtractShortcut = new JCheckBox("Atalho global F8 (−1)", true);
     private final JSlider sensitivity = new JSlider(50, 95, 80);
     private final CounterStore store;
     private CounterStore.State state;
@@ -40,7 +41,8 @@ public final class Main {
     private double bestSimilarity = Double.NaN;
     private Timer countdown;
     private Thread task;
-    private WindowsHotkey hotkey;
+    private WindowsHotkey addHotkey;
+    private WindowsHotkey subtractHotkey;
     private boolean recording;
 
     public static void main(String[] args) {
@@ -68,7 +70,8 @@ public final class Main {
                 app.window.addWindowListener(new WindowAdapter() {
                     @Override
                     public void windowClosed(WindowEvent event) {
-                        app.hotkey.close();
+                        app.addHotkey.close();
+                        app.subtractHotkey.close();
                         app.stopTask();
                         try {
                             lock.close();
@@ -77,9 +80,10 @@ public final class Main {
                         }
                     }
                 });
-                app.startShortcut();
+                app.addHotkey = app.startShortcut(app.addShortcut, WindowsHotkey.VK_F9, "F9", 1);
+                app.subtractHotkey = app.startShortcut(app.subtractShortcut, WindowsHotkey.VK_F8, "F8", -1);
                 app.window.setVisible(true);
-                if (!app.state.references().isEmpty()) {
+                if (!app.state.samples().isEmpty()) {
                     app.startMonitoring();
                 }
             } catch (IOException error) {
@@ -129,11 +133,24 @@ public final class Main {
         actions.add(addButton);
         actions.add(subtractButton);
         content.add(actions);
-        shortcut.setOpaque(false);
-        shortcut.setAlignmentX(Component.LEFT_ALIGNMENT);
-        shortcut.setToolTipText("Soma um baú com F9, mesmo com o contador minimizado.");
         content.add(Box.createVerticalStrut(6));
-        content.add(shortcut);
+        JPanel audioActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        audioActions.setOpaque(false);
+        audioActions.setAlignmentX(Component.LEFT_ALIGNMENT);
+        reviewButton.addActionListener(event -> reviewSamples());
+        previewButton.addActionListener(event -> previewReceivedAudio());
+        audioActions.add(reviewButton);
+        audioActions.add(previewButton);
+        content.add(audioActions);
+        JPanel shortcuts = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        shortcuts.setOpaque(false);
+        shortcuts.setAlignmentX(Component.LEFT_ALIGNMENT);
+        addShortcut.setOpaque(false);
+        subtractShortcut.setOpaque(false);
+        shortcuts.add(addShortcut);
+        shortcuts.add(subtractShortcut);
+        content.add(Box.createVerticalStrut(6));
+        content.add(shortcuts);
         content.add(Box.createVerticalStrut(15));
 
         JPanel tuning = new JPanel(new GridLayout(2, 2, 12, 4));
@@ -174,28 +191,31 @@ public final class Main {
         similarityLabel.setText("Melhor semelhança: %s  ·  Mínimo para contar: %d%%".formatted(best, sensitivity.getValue()));
     }
 
-    private void startShortcut() {
-        hotkey = new WindowsHotkey(
+    private WindowsHotkey startShortcut(JCheckBox shortcut, int key, String keyName, int amount) {
+        String label = shortcut.getText();
+        var hotkey = new WindowsHotkey(key,
                 () -> SwingUtilities.invokeLater(() -> {
                     if (window.isDisplayable() && shortcut.isSelected()) {
-                        changeCount(1);
+                        changeCount(amount);
                     }
                 }),
                 registered -> SwingUtilities.invokeLater(() -> {
                     if (window.isDisplayable() && shortcut.isSelected()) {
                         if (registered) {
-                            shortcut.setText("Atalho global F9 (+1)");
+                            shortcut.setText(label);
                         } else {
                             shortcut.setSelected(false);
-                            shortcut.setText("Atalho F9 indisponível · marca para tentar de novo");
+                            shortcut.setText(keyName + " indisponível");
+                            shortcut.setToolTipText("Marca para tentar ativar o atalho de novo.");
                         }
                     }
                 }));
         shortcut.addActionListener(event -> {
-            shortcut.setText("Atalho global F9 (+1)");
+            shortcut.setText(label);
             hotkey.setEnabled(shortcut.isSelected());
         });
         hotkey.setEnabled(shortcut.isSelected());
+        return hotkey;
     }
 
     private static JPanel scoreCard(String name, JLabel score) {
@@ -218,12 +238,14 @@ public final class Main {
     private void refresh() {
         sessionLabel.setText(String.valueOf(session));
         totalLabel.setText(String.valueOf(state.total()));
-        int count = state.references().size();
+        int count = state.samples().size();
         samplesLabel.setText(count == 1 ? "1 amostra guardada" : count + " amostras guardadas");
         subtractButton.setEnabled(state.total() > 0);
         monitorButton.setEnabled(!recording && count > 0);
         monitorButton.setText(task != null && !recording ? "Pausar contagem" : "Iniciar contagem");
         calibrateButton.setEnabled(!recording);
+        reviewButton.setEnabled(!recording && count > 0);
+        previewButton.setEnabled(!recording);
     }
 
     private boolean save(CounterStore.State updated) {
@@ -242,7 +264,7 @@ public final class Main {
                 || (amount > 0 && state.total() > Long.MAX_VALUE - amount)) {
             return;
         }
-        if (save(new CounterStore.State(state.total() + amount, state.references()))) {
+        if (save(new CounterStore.State(state.total() + amount, state.samples()))) {
             session = Math.max(0, session + amount);
             refresh();
         }
@@ -265,7 +287,7 @@ public final class Main {
     }
 
     private void startMonitoring() {
-        var detector = new ChestDetector(state.references());
+        var detector = new ChestDetector(state.samples().stream().map(CounterStore.Sample::fingerprint).toList());
         status.setText("A ligar à saída de áudio…");
         startTask((audio, sender) -> {
             post(sender, () -> status.setText("A ouvir a saída de áudio do Windows."));
@@ -323,17 +345,17 @@ public final class Main {
             }
             countdown.stop();
             countdown = null;
-            record(clip -> finishCalibration(clip, resume));
+            status.setText("A gravar. Abre um baú agora.");
+            record(RECORD_SECONDS, clip -> finishCalibration(clip, resume));
         });
         countdown.start();
     }
 
-    private void record(Consumer<float[]> completion) {
-        status.setText("A gravar. Abre um baú agora.");
+    private void record(int seconds, Consumer<float[]> completion) {
         startTask((audio, sender) -> {
-            float[] clip = new float[WindowsAudio.SAMPLE_RATE * RECORD_SECONDS];
+            float[] clip = new float[WindowsAudio.SAMPLE_RATE * seconds];
             int written = 0;
-            long end = System.nanoTime() + RECORD_SECONDS * 1_000_000_000L;
+            long end = System.nanoTime() + seconds * 1_000_000_000L;
             while (written < clip.length && System.nanoTime() < end && !sender.isInterrupted()) {
                 float[] chunk = audio.poll();
                 int length = Math.min(chunk.length, clip.length - written);
@@ -355,21 +377,100 @@ public final class Main {
             showError("A gravação está sem som. Verifica se o Fortnite usa a saída predefinida do Windows.");
         } else {
             window.toFront();
-            float[][] reference = new CalibrationDialog(window, clip).choose();
-            if (reference != null) {
-                List<float[][]> references = new ArrayList<>(state.references());
-                if (references.size() == CounterStore.MAX_REFERENCES) {
-                    references.removeFirst();
+            CounterStore.Sample sample = new CalibrationDialog(window, clip).choose();
+            if (sample != null) {
+                List<CounterStore.Sample> samples = new ArrayList<>(state.samples());
+                if (samples.size() == CounterStore.MAX_REFERENCES) {
+                    samples.removeFirst();
                 }
-                references.add(reference);
-                saved = save(new CounterStore.State(state.total(), references));
+                samples.add(sample);
+                saved = save(new CounterStore.State(state.total(), samples));
             }
         }
         refresh();
         if (saved || resume) {
             startMonitoring();
         } else {
-            status.setText("Grava uma amostra para começar.");
+            showIdleStatus();
+        }
+    }
+
+    private void showIdleStatus() {
+        status.setText(state.samples().isEmpty() ? "Grava uma amostra para começar." : "Contagem em pausa.");
+    }
+
+    private void reviewSamples() {
+        boolean resume = task != null;
+        stopTask();
+        status.setText("Contagem em pausa durante a reprodução.");
+        try (var preview = new AudioPreview()) {
+            List<CounterStore.Sample> samples = state.samples();
+            var list = new DefaultListModel<String>();
+            for (int i = 0; i < samples.size(); i++) {
+                byte[] pcm = samples.get(i).pcm();
+                String duration = pcm == null ? "sem gravação original"
+                        : "%.2f s".formatted(pcm.length / (2.0 * WindowsAudio.SAMPLE_RATE));
+                list.addElement("Amostra " + (i + 1) + " · " + duration);
+            }
+            var choices = new JList<>(list);
+            choices.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+            var details = new JLabel();
+            var listen = new JButton("Ouvir amostra");
+            choices.addListSelectionListener(event -> {
+                preview.close();
+                int index = choices.getSelectedIndex();
+                boolean available = index >= 0 && samples.get(index).pcm() != null;
+                listen.setEnabled(available);
+                details.setText(available ? "Trecho usado para reconhecer o som do baú."
+                        : "A amostra antiga ainda deteta sons. Volta a gravá-la para a poderes ouvir.");
+            });
+            listen.addActionListener(event -> preview.play(choices, samples.get(choices.getSelectedIndex()).pcm()));
+            choices.setSelectedIndex(0);
+            JPanel panel = new JPanel(new BorderLayout(0, 8));
+            panel.add(new JScrollPane(choices), BorderLayout.CENTER);
+            JPanel controls = new JPanel(new BorderLayout(0, 6));
+            controls.add(details, BorderLayout.CENTER);
+            controls.add(listen, BorderLayout.SOUTH);
+            panel.add(controls, BorderLayout.SOUTH);
+            JOptionPane.showMessageDialog(window, panel, "Amostras guardadas", JOptionPane.PLAIN_MESSAGE);
+        } finally {
+            resumeAfterPreview(resume);
+        }
+    }
+
+    private void previewReceivedAudio() {
+        boolean resume = task != null;
+        stopTask();
+        recording = true;
+        status.setText("A gravar o áudio do Windows durante " + PREVIEW_SECONDS + " segundos…");
+        record(PREVIEW_SECONDS, clip -> {
+            stopTask();
+            try (var preview = new AudioPreview()) {
+                if (clip.length == 0 || peak(clip) < 0.001f) {
+                    showError("Não foi captado som audível. Confirma a saída predefinida do Windows.");
+                    return;
+                }
+                var listen = new JButton("Reproduzir gravação");
+                byte[] pcm = AudioPreview.toPcm(clip);
+                listen.addActionListener(event -> preview.play(listen, pcm));
+                var panel = new JPanel(new BorderLayout(0, 8));
+                panel.add(new JLabel("Gravação temporária da saída predefinida do Windows."), BorderLayout.NORTH);
+                panel.add(listen, BorderLayout.CENTER);
+                JOptionPane.showMessageDialog(window, panel, "Áudio recebido", JOptionPane.PLAIN_MESSAGE);
+            } finally {
+                resumeAfterPreview(resume);
+            }
+        });
+    }
+
+    private void resumeAfterPreview(boolean resume) {
+        if (!window.isDisplayable()) {
+            return;
+        }
+        if (resume) {
+            startMonitoring();
+        } else {
+            showIdleStatus();
         }
     }
 
@@ -428,8 +529,8 @@ public final class Main {
         private final JButton save = new JButton("Guardar amostra");
         private final JButton listen = new JButton("Ouvir trecho");
         private final float[] bars = new float[350];
-        private Clip playback;
-        private float[][] result;
+        private final AudioPreview preview = new AudioPreview();
+        private CounterStore.Sample result;
 
         CalibrationDialog(JFrame owner, float[] audio) {
             super(owner, "Selecionar som do baú", true);
@@ -484,10 +585,11 @@ public final class Main {
             addCentered(content, interval);
             from.addChangeListener(event -> updateInterval());
             to.addChangeListener(event -> updateInterval());
-            listen.addActionListener(event -> listen());
+            listen.addActionListener(event -> preview.play(this, AudioPreview.toPcm(selection())));
             save.addActionListener(event -> {
                 try {
-                    result = ChestDetector.reference(selection());
+                    float[] samples = selection();
+                    result = new CounterStore.Sample(ChestDetector.reference(samples), AudioPreview.toPcm(samples));
                     dispose();
                 } catch (IllegalArgumentException error) {
                     JOptionPane.showMessageDialog(this, error.getMessage(), "Amostra", JOptionPane.WARNING_MESSAGE);
@@ -524,41 +626,15 @@ public final class Main {
             return Arrays.copyOfRange(audio, from.getValue() * SAMPLES_PER_MS, to.getValue() * SAMPLES_PER_MS);
         }
 
-        private void listen() {
-            stopPlayback();
-            float[] samples = selection();
-            byte[] pcm = new byte[samples.length * 2];
-            for (int i = 0; i < samples.length; i++) {
-                int value = Math.round(Math.clamp(samples[i], -1f, 1f) * 32767);
-                pcm[i * 2] = (byte) value;
-                pcm[i * 2 + 1] = (byte) (value >> 8);
-            }
-            try {
-                playback = AudioSystem.getClip();
-                playback.open(new AudioFormat(WindowsAudio.SAMPLE_RATE, 16, 1, true, false), pcm, 0, pcm.length);
-                playback.start();
-            } catch (javax.sound.sampled.LineUnavailableException | IllegalArgumentException error) {
-                stopPlayback();
-                JOptionPane.showMessageDialog(this, "Não foi possível reproduzir o trecho. " + error.getMessage());
-            }
-        }
-
-        float[][] choose() {
+        CounterStore.Sample choose() {
             setVisible(true);
             return result;
         }
 
         @Override
         public void dispose() {
-            stopPlayback();
+            preview.close();
             super.dispose();
-        }
-
-        private void stopPlayback() {
-            if (playback != null) {
-                playback.close();
-                playback = null;
-            }
         }
     }
 }

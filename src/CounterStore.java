@@ -7,7 +7,9 @@ final class CounterStore {
     static final int MAX_REFERENCES = 6;
     static final int MIN_CLIP_MS = 600;
     static final int MAX_CLIP_MS = 2500;
-    private static final int FORMAT = 0x46434301;
+    private static final int FINGERPRINT_ONLY_FORMAT = 0x46434301;
+    private static final int FORMAT = 0x46434302;
+    private static final int PCM_BYTES_PER_MS = WindowsAudio.SAMPLE_RATE / 1000 * 2;
     private final Path file;
 
     CounterStore(Path directory) throws IOException {
@@ -15,9 +17,11 @@ final class CounterStore {
         file = directory.resolve("contador.dat");
     }
 
-    record State(long total, List<float[][]> references) {
+    record Sample(float[][] fingerprint, byte[] pcm) {}
+
+    record State(long total, List<Sample> samples) {
         State {
-            references = List.copyOf(references);
+            samples = List.copyOf(samples);
         }
     }
 
@@ -26,7 +30,8 @@ final class CounterStore {
             return new State(0, List.of());
         }
         try (var input = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
-            if (input.readInt() != FORMAT) {
+            int version = input.readInt();
+            if (version != FORMAT && version != FINGERPRINT_ONLY_FORMAT) {
                 throw new IOException("Formato de dados desconhecido.");
             }
             long total = input.readLong();
@@ -34,7 +39,7 @@ final class CounterStore {
             if (total < 0 || count < 0 || count > MAX_REFERENCES) {
                 throw new IOException("Dados do contador inválidos.");
             }
-            List<float[][]> references = new ArrayList<>();
+            List<Sample> samples = new ArrayList<>();
             for (int index = 0; index < count; index++) {
                 int length = input.readInt();
                 if (length < 12 || length > MAX_CLIP_MS / 20) {
@@ -55,9 +60,21 @@ final class CounterStore {
                 if (weight == 0) {
                     throw new IOException("Amostra sem som.");
                 }
-                references.add(reference);
+                byte[] pcm = null;
+                if (version == FORMAT) {
+                    int bytes = input.readInt();
+                    if (bytes != 0) {
+                        if (bytes < MIN_CLIP_MS * PCM_BYTES_PER_MS || bytes > MAX_CLIP_MS * PCM_BYTES_PER_MS
+                                || bytes % 2 != 0) {
+                            throw new IOException("Duração da gravação inválida.");
+                        }
+                        pcm = new byte[bytes];
+                        input.readFully(pcm);
+                    }
+                }
+                samples.add(new Sample(reference, pcm));
             }
-            return new State(total, references);
+            return new State(total, samples);
         }
     }
 
@@ -67,13 +84,19 @@ final class CounterStore {
             try (var output = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(temporary)))) {
                 output.writeInt(FORMAT);
                 output.writeLong(state.total());
-                output.writeInt(state.references().size());
-                for (float[][] reference : state.references()) {
+                output.writeInt(state.samples().size());
+                for (Sample sample : state.samples()) {
+                    float[][] reference = sample.fingerprint();
                     output.writeInt(reference.length);
                     for (float[] frame : reference) {
                         for (float value : frame) {
                             output.writeFloat(value);
                         }
+                    }
+                    byte[] pcm = sample.pcm();
+                    output.writeInt(pcm == null ? 0 : pcm.length);
+                    if (pcm != null) {
+                        output.write(pcm);
                     }
                 }
             }

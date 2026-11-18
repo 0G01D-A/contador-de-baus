@@ -39,13 +39,18 @@ Se a barra **Nível do som do Windows** ficar parada, confirma que o Fortnite es
 
 Se a barra mexer mas a contagem ficar igual, pausa e volta a iniciar a contagem para repor a **Melhor semelhança**. Abre um baú e compara o valor com o **Mínimo para contar**. Se ficar um pouco abaixo, move a sensibilidade para a esquerda e testa noutra abertura. Se a semelhança for baixa, usa **Ouvir trecho** ao gravar uma nova amostra e recorta o som de abertura com menos música, passos ou ataques. Depois, testa também alguns segundos sem abrir baús para verificar se o contador soma por engano.
 
-Se o som não for detetado, carrega uma vez em **F9** para somar um baú à sessão e ao total, mesmo com o Fortnite em primeiro plano. O atalho está ativo ao abrir a aplicação. Podes desmarcar **Atalho global F9 (+1)** para libertar a tecla, por exemplo se já a usas no jogo.
+Usa **F9** para adicionar um baú e **F8** para retirar um, mesmo com o Fortnite em primeiro plano. Os atalhos estão ativos ao abrir a aplicação. Podes desmarcá-los individualmente para libertar as teclas.
 
 Se a aplicação contar um baú a mais, clica em **Remover 1 baú**. Isso retira um do total guardado e reduz a contagem da sessão, se estiver acima de zero. Podes corrigir o total mesmo depois de reabrir a aplicação.
 
 Se o contador falhar aberturas, experimenta mover a sensibilidade para a esquerda. Se contar outros sons, move para a direita. Para reconhecer outro tipo de baú, grava outra amostra da mesma forma. A aplicação guarda as seis mais recentes. Baús abertos durante a calibração podem ser adicionados com **+1**.
 
-A deteção usa o áudio reproduzido na saída predefinida do Windows. Outros sons nessa saída, como música, chat de voz e efeitos do jogo, podem interferir. As referências acústicas e o total são guardados localmente em `%LOCALAPPDATA%\ContadorDeBaus`. A gravação de calibração é mantida em memória durante a seleção.
+### Confirmar que som está a ser usado
+
+- **Rever amostras** lista os trechos guardados. Seleciona um e clica em **Ouvir amostra**. As amostras de versões anteriores continuam a ser usadas na deteção. Para as ouvires, grava-as novamente, porque essas versões só guardavam os dados usados na comparação.
+- **Ouvir áudio recebido** capta os próximos cinco segundos da saída predefinida do Windows. Reproduz som no Fortnite enquanto a captura decorre e depois clica em **Reproduzir gravação**. Esta gravação é temporária. A aplicação pausa a contagem durante o teste e retoma-a quando fechas a janela, se já estava ativa.
+
+A deteção usa o áudio reproduzido na saída predefinida do Windows. Outros sons nessa saída, como música, chat de voz e efeitos do jogo, podem interferir. O total, as referências acústicas e os novos trechos selecionados ficam guardados localmente em `%LOCALAPPDATA%\ContadorDeBaus`.
 
 ## Compilar
 
