@@ -11,8 +11,12 @@ import java.util.function.Consumer;
 final class RoomPanel extends JPanel implements AutoCloseable {
     private final JLabel total = new JLabel("—", SwingConstants.CENTER);
     private final JLabel own = new JLabel("—", SwingConstants.CENTER);
+    private final JLabel personalAverage = new JLabel("—", SwingConstants.CENTER);
+    private final JLabel teamAverage = new JLabel("—", SwingConstants.CENTER);
     private final JLabel status = new JLabel("Sem sala", SwingConstants.CENTER);
     private final JButton settings = new JButton("Contagem em grupo");
+    private final JButton nextPersonal = new JButton("Nova partida pessoal");
+    private final JButton nextTeam = new JButton("Nova partida da equipa");
     private final Consumer<Boolean> membershipChanged;
     private final Path roomFile;
     private SharedRoom room;
@@ -24,17 +28,49 @@ final class RoomPanel extends JPanel implements AutoCloseable {
         this.roomFile = roomFile;
         this.membershipChanged = membershipChanged;
         setOpaque(false);
-        var counts = new JPanel(new GridLayout(1, 2, 10, 0));
+        var counts = new JPanel(new GridLayout(2, 2, 10, 8));
         counts.setOpaque(false);
         counts.add(card("Total do grupo", total));
-        counts.add(card("A minha contribuição", own));
+        counts.add(card("Os meus baús nesta partida", own));
+        counts.add(card("A minha média por partida", personalAverage));
+        counts.add(card("Média da equipa por partida", teamAverage));
         add(counts, BorderLayout.CENTER);
         var actions = new JPanel(new BorderLayout(0, 6));
         actions.setOpaque(false);
         actions.add(status, BorderLayout.NORTH);
-        actions.add(settings, BorderLayout.SOUTH);
+        actions.add(settings, BorderLayout.CENTER);
+        var matches = new JPanel(new GridLayout(1, 2, 10, 0));
+        matches.setOpaque(false);
+        matches.add(nextPersonal);
+        matches.add(nextTeam);
+        actions.add(matches, BorderLayout.SOUTH);
         add(actions, BorderLayout.SOUTH);
         settings.addActionListener(event -> manage());
+        nextPersonal.addActionListener(event -> nextMatch(false));
+        nextTeam.addActionListener(event -> nextMatch(true));
+        nextPersonal.setEnabled(false);
+        nextTeam.setEnabled(false);
+    }
+
+    private void nextMatch(boolean team) {
+        if (room == null || (team && !room.history().host)) {
+            return;
+        }
+        String title = team ? "Nova partida da equipa" : "Nova partida pessoal";
+        String message = team
+                ? "Registar esta partida da equipa para a média? O total do grupo mantém-se."
+                : "Registar esta partida para a tua média e pôr a tua contagem a zero? O total do grupo mantém-se.";
+        var options = new Object[]{title, "Cancelar"};
+        if (JOptionPane.showOptionDialog(this, message, title, JOptionPane.DEFAULT_OPTION,
+                JOptionPane.QUESTION_MESSAGE, null, options, options[1]) != 0) {
+            return;
+        }
+        try {
+            room.history().nextMatch(team);
+            showCounts(room.history());
+        } catch (IOException error) {
+            showError("Não foi possível guardar a partida. ", error);
+        }
     }
 
     private static JPanel card(String caption, JLabel value) {
@@ -144,12 +180,22 @@ final class RoomPanel extends JPanel implements AutoCloseable {
         last = room.history();
         showCounts(last);
         status.setText(message);
+        nextPersonal.setEnabled(true);
+        nextTeam.setEnabled(last.host);
         membershipChanged.accept(true);
     }
 
     private void showCounts(RoomHistory history) {
-        total.setText(Long.toString(history.total()));
-        own.setText(Long.toString(history.own().total()));
+        var score = history.score();
+        total.setText(Long.toString(score.total()));
+        own.setText(Long.toString(history.ownMatch()));
+        showAverage(personalAverage, history.personalGames());
+        showAverage(teamAverage, score.team());
+    }
+
+    private static void showAverage(JLabel label, RoomHistory.Games games) {
+        label.setText(games.completed() == 0 ? "—" : "%.2f".formatted((double) games.chests() / games.completed()));
+        label.setToolTipText(games.completed() + " partidas terminadas");
     }
 
     private void showError(String message, Exception error) {
@@ -181,7 +227,7 @@ final class RoomPanel extends JPanel implements AutoCloseable {
     private void update(long token, SharedRoom.View view) {
         SwingUtilities.invokeLater(() -> {
             if (token == generation && room != null) {
-                total.setText(Long.toString(view.total()));
+                showCounts(room.history());
                 status.setText(view.online() ? "Ligado à sala" : "Sala sem ligação · a tentar novamente…");
             }
         });
@@ -198,6 +244,8 @@ final class RoomPanel extends JPanel implements AutoCloseable {
             showCounts(last);
             status.setText("Última sala guardada");
         }
+        nextPersonal.setEnabled(false);
+        nextTeam.setEnabled(false);
         membershipChanged.accept(false);
     }
 }

@@ -16,6 +16,7 @@ final class SharedRoom implements AutoCloseable {
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int REQUEST_BYTES = 40;
     private static final int RESPONSE_BYTES = 16;
+    private static final int STATS_BYTES = 32;
     private static final int TIMEOUT_MS = 1500;
     private final Invite invitation;
     private final Server server;
@@ -23,7 +24,7 @@ final class SharedRoom implements AutoCloseable {
     private final Thread client;
     private final Semaphore wake = new Semaphore(0);
 
-    record View(long total, boolean online) {}
+    record View(long total, boolean online, RoomHistory.Games team) {}
 
     private record Invite(String host, int port, byte[] key) {
         static Invite parse(String text) {
@@ -116,10 +117,16 @@ final class SharedRoom implements AutoCloseable {
         while (!Thread.currentThread().isInterrupted()) {
             View view;
             try {
-                view = history.host ? new View(history.total(), true) : query(history.own());
-                history.received(view.total());
+                if (history.host) {
+                    var score = history.score();
+                    view = new View(score.total(), true, score.team());
+                } else {
+                    view = query(history.own());
+                    history.received(view.total(), view.team());
+                }
             } catch (IOException | GeneralSecurityException | IllegalArgumentException error) {
-                view = new View(history.total(), false);
+                var score = history.score();
+                view = new View(score.total(), false, score.team());
             }
             if (!view.equals(previous)) {
                 update.accept(view);
@@ -147,7 +154,17 @@ final class SharedRoom implements AutoCloseable {
             if (response.getLong() != nonce) {
                 throw new IOException("Resposta da sala inválida.");
             }
-            return new View(response.getLong(), true);
+            long total = response.getLong();
+            try {
+                var stats = receive(socket, invitation.key(), STATS_BYTES, (byte) 3);
+                if (stats.getLong() != nonce) {
+                    throw new IOException("Estatísticas da sala inválidas.");
+                }
+                return new View(total, true, new RoomHistory.Games(stats.getLong(), stats.getLong(), stats.getLong()));
+            } catch (EOFException legacy) {
+                // Older hosts close the connection after sending the total.
+                return new View(total, true, null);
+            }
         }
     }
 
@@ -224,10 +241,14 @@ final class SharedRoom implements AutoCloseable {
                 var id = new UUID(request.getLong(), request.getLong());
                 var contribution = new RoomHistory.Contribution(request.getLong(), request.getLong());
                 long nonce = request.getLong();
-                long roomTotal = history.accept(id, contribution);
+                var score = history.accept(id, contribution);
                 byte[] response = ByteBuffer.allocate(RESPONSE_BYTES).putLong(nonce)
-                        .putLong(roomTotal).array();
+                        .putLong(score.total()).array();
                 send(connection, key, response, (byte) 2);
+                var stats = score.team();
+                byte[] extension = ByteBuffer.allocate(STATS_BYTES).putLong(nonce).putLong(stats.completed())
+                        .putLong(stats.chests()).putLong(stats.baseline()).array();
+                send(connection, key, extension, (byte) 3);
             } catch (IOException | GeneralSecurityException invalid) {
                 // Drop unauthenticated, invalid, or incomplete requests.
             }

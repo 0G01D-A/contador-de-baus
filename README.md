@@ -1,6 +1,6 @@
 # Contador de Baús
 
-Contador manual para Windows. Cria uma sala para somar os baús abertos por ti e pelos teus amigos. A janela mostra o **Total do grupo** e **A minha contribuição**.
+Contador manual para Windows. Cria uma sala para somar os baús abertos por ti e pelos teus amigos. A janela mostra o **Total do grupo**, os teus baús nesta partida e as médias por partida.
 
 ## Instalar ou atualizar
 
@@ -20,7 +20,13 @@ java --enable-native-access=ALL-UNNAMED -jar .\contador.jar
 2. Clica em **Copiar convite** e partilha-o em privado.
 3. Os amigos abrem **Contagem em grupo → Entrar com convite** e colam o convite. Podem usar os botões ou os atalhos globais para atualizar a contagem.
 
-Na mesma rede local, o convite funciona diretamente. Cada jogador pode retirar até ao número de baús que adicionou. A contribuição começa em zero quando entras numa sala diferente.
+Na mesma rede local, o convite funciona diretamente. Cada jogador pode retirar até ao número de baús que adicionou na partida pessoal atual.
+
+### Contagem por partida e médias
+
+- Quando começares uma nova partida, clica em **Nova partida pessoal** e confirma. Os teus baús nessa partida entram na tua média e o teu contador volta a zero. O **Total do grupo** mantém-se.
+- Para contar uma partida na média da equipa, o anfitrião clica em **Nova partida da equipa** e confirma uma vez por partida, depois de o total estar sincronizado. A aplicação regista os baús adicionados pela equipa desde a marcação anterior. Os contadores pessoais e o total do grupo mantêm-se.
+- As médias usam só partidas terminadas, incluindo partidas com zero baús. As salas guardadas na versão 3.2 mantêm o total acumulado, mas as médias começam a ser calculadas a partir desta atualização.
 
 ### Retomar a última sala
 
