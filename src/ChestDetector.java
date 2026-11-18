@@ -38,6 +38,7 @@ final class ChestDetector {
     private long lastDetection = -1000;
     private boolean armed = true;
     private double bestSimilarity = Double.NaN;
+    private double recentSimilarity;
 
     ChestDetector(List<float[][]> references) {
         this.references = List.copyOf(references);
@@ -85,6 +86,15 @@ final class ChestDetector {
         return bestSimilarity;
     }
 
+    double takeRecentSimilarity() {
+        if (Double.isNaN(bestSimilarity)) {
+            return Double.NaN;
+        }
+        double similarity = recentSimilarity;
+        recentSimilarity = 0;
+        return similarity;
+    }
+
     private boolean observe(float[] frame, double threshold) {
         frames[frameIndex] = frame;
         frameIndex = (frameIndex + 1) % frames.length;
@@ -112,6 +122,7 @@ final class ChestDetector {
         if (Double.isFinite(best)) {
             double similarity = Math.clamp(best, 0, 1);
             bestSimilarity = Double.isNaN(bestSimilarity) ? similarity : Math.max(bestSimilarity, similarity);
+            recentSimilarity = Math.max(recentSimilarity, similarity);
         }
         if (best < threshold - 0.07) {
             armed = true;

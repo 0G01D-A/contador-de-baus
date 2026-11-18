@@ -24,6 +24,7 @@ public final class Main {
     private final JLabel samplesLabel = label("", 13, MUTED);
     private final JLabel similarityLabel = label("", 13, MUTED);
     private final JProgressBar level = new JProgressBar(0, 100);
+    private final JProgressBar liveSimilarity = new JProgressBar(0, 100);
     private final JButton monitorButton = new JButton("Iniciar contagem");
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
@@ -152,11 +153,16 @@ public final class Main {
         content.add(shortcuts);
         content.add(Box.createVerticalStrut(15));
 
-        JPanel tuning = new JPanel(new GridLayout(2, 2, 12, 4));
+        JPanel tuning = new JPanel(new GridLayout(3, 2, 12, 4));
         tuning.setOpaque(false);
         tuning.setAlignmentX(Component.LEFT_ALIGNMENT);
         tuning.add(label("Nível do som do Windows", 13, MUTED));
         tuning.add(level);
+        tuning.add(label("Semelhança agora", 13, MUTED));
+        liveSimilarity.setStringPainted(true);
+        liveSimilarity.setToolTipText("Semelhança do áudio recebido com a amostra mais parecida.");
+        updateLiveSimilarity(Double.NaN);
+        tuning.add(liveSimilarity);
         tuning.add(label("Mais deteções ← Sensibilidade → Menos", 12, MUTED));
         sensitivity.setOpaque(false);
         sensitivity.setToolTipText("Move para a esquerda se a aplicação falhar aberturas; para a direita se contar outros sons.");
@@ -188,6 +194,11 @@ public final class Main {
     private void refreshSimilarity() {
         String best = Double.isNaN(bestSimilarity) ? "—" : "%.1f%%".formatted(bestSimilarity * 100);
         similarityLabel.setText("Melhor semelhança: %s  ·  Mínimo para contar: %d%%".formatted(best, sensitivity.getValue()));
+    }
+
+    private void updateLiveSimilarity(double similarity) {
+        liveSimilarity.setValue(Double.isNaN(similarity) ? 0 : (int) Math.round(similarity * 100));
+        liveSimilarity.setString(Double.isNaN(similarity) ? "—" : "%.1f%%".formatted(similarity * 100));
     }
 
     private WindowsHotkey startShortcut(JCheckBox shortcut, int key, String keyName, int amount) {
@@ -280,6 +291,7 @@ public final class Main {
         }
         recording = false;
         level.setValue(0);
+        updateLiveSimilarity(Double.NaN);
         bestSimilarity = Double.NaN;
         refreshSimilarity();
         refresh();
@@ -303,8 +315,10 @@ public final class Main {
                 if (now >= nextMeter) {
                     int value = (int) (Math.min(1, Math.sqrt(peak)) * 100);
                     double similarity = detector.bestSimilarity();
+                    double current = detector.takeRecentSimilarity();
                     post(sender, () -> {
                         level.setValue(value);
+                        updateLiveSimilarity(current);
                         if (Double.compare(bestSimilarity, similarity) != 0) {
                             bestSimilarity = similarity;
                             refreshSimilarity();
