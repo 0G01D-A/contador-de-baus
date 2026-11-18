@@ -24,13 +24,34 @@ Na mesma rede local, o convite funciona diretamente. A sala é temporária e o a
 
 ### Jogar pela internet sem VPN
 
-Para amigos noutra rede, configura um túnel TCP no PC do anfitrião, por exemplo com o [ngrok](https://ngrok.com/docs/gateway/endpoints/tcp). Usa o IP local mostrado no convite e a porta `47855`. Se o teu IP no convite for `192.168.1.20`, corre:
+Só o anfitrião precisa de instalar o **ngrok**. Os outros jogadores entram pelo Contador de Baús.
 
-```powershell
-ngrok tcp 192.168.1.20:47855
-```
+1. Instala o ngrok pela Microsoft Store ou corre o comando abaixo no PowerShell. [Instalação para Windows](https://ngrok.com/download/windows)
 
-Se o serviço mostrar `tcp://1.tcp.ngrok.io:12345`, o convite para o teu amigo fica no formato `baus://1.tcp.ngrok.io:12345/CHAVE_DA_SALA`. Mantém a chave original depois da última barra. Só o anfitrião precisa de manter o túnel aberto.
+   ```powershell
+   winget install ngrok -s msstore
+   ```
+
+2. Cria uma conta no ngrok e copia o teu *authtoken* no painel. Abre um novo PowerShell e substitui `O_TEU_TOKEN` pelo teu token. Para ativar túneis TCP no plano gratuito, o ngrok pede um cartão válido. [Configurar o token](https://ngrok.com/docs/start) · [Requisitos do túnel TCP](https://ngrok.com/docs/gateway/endpoints/tcp)
+
+   ```powershell
+   ngrok config add-authtoken "O_TEU_TOKEN"
+   ```
+
+3. Cria a sala no contador e copia o convite. Usa o **IP e a porta desse convite** no comando. Por exemplo, se o convite começar por `baus://192.168.1.20:47855/`, corre:
+
+   ```powershell
+   ngrok tcp 192.168.1.20:47855
+   ```
+
+4. Copia o endereço público que o ngrok mostrar. No convite, troca apenas o IP e a porta por esse endereço. Mantém `baus://` e a chave original depois da última barra.
+
+   ```text
+   Convite local:   baus://192.168.1.20:47855/CHAVE_DA_SALA
+   Convite público: baus://1.tcp.ngrok.io:12345/CHAVE_DA_SALA
+   ```
+
+5. Envia o convite alterado em privado. O teu colega cola-o em **Contagem em grupo → Entrar com convite**. Mantém o contador e o ngrok abertos. Para testar, usa **Adicionar 1** e confirma que o **Total do grupo** sobe nos dois PCs. Guarda o *authtoken* do ngrok para ti.
 
 ## Escolher os atalhos
 
