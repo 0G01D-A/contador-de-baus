@@ -67,6 +67,8 @@ Só o anfitrião precisa de instalar o **ngrok**. Os outros jogadores entram pel
 
 5. Envia o convite alterado em privado. O teu colega cola-o em **Contagem em grupo → Entrar com convite**. Mantém o contador e o ngrok abertos. Para testar, usa **Adicionar 1** e confirma que o **Total do grupo** sobe nos dois PCs. Guarda o *authtoken* do ngrok para ti.
 
+**Sala aberta neste PC** confirma que o anfitrião abriu a sala. No PC do convidado, **Ligado à sala** confirma que recebeu uma resposta autenticada. Se o contador mostrar que as médias estão indisponíveis, o total do grupo continua a sincronizar e as médias voltam a aparecer quando a informação chega.
+
 ## Escolher os atalhos
 
 Na janela principal, clica em **Alterar teclas**. Na linha **Adicionar baú** ou **Retirar baú**, clica em **Premir tecla** e carrega na tecla que queres, por exemplo **Y**. Clica em **Guardar**. Também podes escolher pelas listas ou combinar a tecla com **Ctrl**, **Alt** e **Shift**. Estão disponíveis letras, números, teclas numéricas e **F1–F11**.

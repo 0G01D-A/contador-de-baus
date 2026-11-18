@@ -228,7 +228,12 @@ final class RoomPanel extends JPanel implements AutoCloseable {
         SwingUtilities.invokeLater(() -> {
             if (token == generation && room != null) {
                 showCounts(room.history());
-                status.setText(view.online() ? "Ligado à sala" : "Sala sem ligação · a tentar novamente…");
+                if (view.online()) {
+                    status.setText(room.history().host ? "Sala aberta neste PC"
+                            : view.team() == null ? "Ligado à sala · médias da equipa indisponíveis" : "Ligado à sala");
+                } else {
+                    status.setText(view.issue() + " · a tentar novamente…");
+                }
             }
         });
     }

@@ -17,14 +17,19 @@ final class SharedRoom implements AutoCloseable {
     private static final int REQUEST_BYTES = 40;
     private static final int RESPONSE_BYTES = 16;
     private static final int STATS_BYTES = 32;
-    private static final int TIMEOUT_MS = 1500;
+    private static final int TIMEOUT_MS = 3500;
+    private static final int STATS_TIMEOUT_MS = 750;
     private final Invite invitation;
     private final Server server;
     private final RoomHistory history;
     private final Thread client;
     private final Semaphore wake = new Semaphore(0);
 
-    record View(long total, boolean online, RoomHistory.Games team) {}
+    record View(long total, boolean online, RoomHistory.Games team, String issue) {
+        View(long total, boolean online, RoomHistory.Games team) {
+            this(total, online, team, null);
+        }
+    }
 
     private record Invite(String host, int port, byte[] key) {
         static Invite parse(String text) {
@@ -126,7 +131,7 @@ final class SharedRoom implements AutoCloseable {
                 }
             } catch (IOException | GeneralSecurityException | IllegalArgumentException error) {
                 var score = history.score();
-                view = new View(score.total(), false, score.team());
+                view = new View(score.total(), false, score.team(), connectionIssue(error));
             }
             if (!view.equals(previous)) {
                 update.accept(view);
@@ -139,6 +144,17 @@ final class SharedRoom implements AutoCloseable {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    private static String connectionIssue(Exception error) {
+        return switch (error) {
+            case UnknownHostException ignored -> "Endereço do convite não encontrado";
+            case ConnectException ignored -> "O destino recusou a ligação";
+            case SocketTimeoutException ignored -> "O anfitrião não respondeu a tempo";
+            case EOFException ignored -> "O destino fechou a ligação antes de responder";
+            case GeneralSecurityException ignored -> "A resposta não corresponde à chave da sala";
+            default -> "Não foi possível confirmar a ligação à sala";
+        };
     }
 
     private View query(RoomHistory.Contribution snapshot) throws IOException, GeneralSecurityException {
@@ -155,27 +171,33 @@ final class SharedRoom implements AutoCloseable {
                 throw new IOException("Resposta da sala inválida.");
             }
             long total = response.getLong();
+            // The authenticated total is sufficient to establish that the room is online.
             try {
+                socket.setSoTimeout(STATS_TIMEOUT_MS);
                 var stats = receive(socket, invitation.key(), STATS_BYTES, (byte) 3);
-                if (stats.getLong() != nonce) {
-                    throw new IOException("Estatísticas da sala inválidas.");
+                if (stats.getLong() == nonce) {
+                    var games = new RoomHistory.Games(stats.getLong(), stats.getLong(), stats.getLong());
+                    if (games.valid()) {
+                        return new View(total, true, games);
+                    }
                 }
-                return new View(total, true, new RoomHistory.Games(stats.getLong(), stats.getLong(), stats.getLong()));
-            } catch (EOFException legacy) {
-                // Older hosts close the connection after sending the total.
-                return new View(total, true, null);
+            } catch (IOException | GeneralSecurityException missingStats) {
+                // Legacy hosts or a relay may omit or delay the optional statistics packet.
             }
+            return new View(total, true, null);
         }
     }
 
     private static void send(Socket socket, byte[] key, byte[] message, byte type)
             throws IOException, GeneralSecurityException {
+        socket.getOutputStream().write(packet(key, message, type));
+    }
+
+    private static byte[] packet(byte[] key, byte[] message, byte type) throws GeneralSecurityException {
         byte[] iv = new byte[12];
         RANDOM.nextBytes(iv);
         Cipher cipher = cipher(Cipher.ENCRYPT_MODE, key, iv, type);
-        var output = socket.getOutputStream();
-        output.write(iv);
-        output.write(cipher.doFinal(message));
+        return ByteBuffer.allocate(iv.length + message.length + 16).put(iv).put(cipher.doFinal(message)).array();
     }
 
     private static ByteBuffer receive(Socket socket, byte[] key, int bytes, byte type)
@@ -244,11 +266,13 @@ final class SharedRoom implements AutoCloseable {
                 var score = history.accept(id, contribution);
                 byte[] response = ByteBuffer.allocate(RESPONSE_BYTES).putLong(nonce)
                         .putLong(score.total()).array();
-                send(connection, key, response, (byte) 2);
                 var stats = score.team();
                 byte[] extension = ByteBuffer.allocate(STATS_BYTES).putLong(nonce).putLong(stats.completed())
                         .putLong(stats.chests()).putLong(stats.baseline()).array();
-                send(connection, key, extension, (byte) 3);
+                byte[] totalPacket = packet(key, response, (byte) 2);
+                byte[] statsPacket = packet(key, extension, (byte) 3);
+                connection.getOutputStream().write(ByteBuffer.allocate(totalPacket.length + statsPacket.length)
+                        .put(totalPacket).put(statsPacket).array());
             } catch (IOException | GeneralSecurityException invalid) {
                 // Drop unauthenticated, invalid, or incomplete requests.
             }
