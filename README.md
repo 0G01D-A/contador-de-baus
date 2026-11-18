@@ -12,6 +12,14 @@ Aplicação para Windows que conta aberturas de baús no Fortnite pelo som. Most
 2. Abre o ficheiro e conclui a instalação. O instalador inclui o Java.
 3. Abre **Contador de Baus** pelo menu Iniciar. Se o instalador ou a aplicação fechar ao abrir, segue a opção JAR abaixo.
 
+### Atualizar uma instalação existente
+
+1. Fecha o **Contador de Baus**, mesmo que esteja minimizado.
+2. Na mesma conta de Windows em que instalaste o contador, descarrega e executa o instalador `.exe` da [versão mais recente](https://github.com/0G01D-A/contador-de-baus/releases/latest). O instalador substitui a versão anterior sem precisares de a desinstalar.
+3. Abre novamente **Contador de Baus** pelo menu Iniciar. O total guardado e as amostras ficam na mesma pasta de dados. A contagem da sessão começa a zero ao reabrir a aplicação.
+
+Se usavas o `contador.jar`, fecha a aplicação, substitui o JAR pelo da versão mais recente e executa o mesmo comando de arranque. O total e as amostras também ficam disponíveis nessa opção.
+
 ### Abrir pelo JAR se o EXE fechar
 
 O instalador e o executável da aplicação estão sem assinatura digital. Algumas políticas do Windows podem bloquear o seu arranque. Também podes abrir a aplicação pelo JAR com Java 25.
