@@ -25,17 +25,19 @@ public final class Main {
     private final JLabel totalLabel = label("0", 42, INK);
     private final JLabel status = label("Grava uma amostra para começar.", 14, INK);
     private final JLabel samplesLabel = label("", 13, MUTED);
+    private final JLabel similarityLabel = label("", 13, MUTED);
     private final JProgressBar level = new JProgressBar(0, 100);
     private final JButton monitorButton = new JButton("Iniciar contagem");
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
     private final JButton subtractButton = new JButton("Remover 1 baú");
     private final JCheckBox shortcut = new JCheckBox("Atalho global F9 (+1)", true);
-    private final JSlider sensitivity = new JSlider(65, 95, 80);
+    private final JSlider sensitivity = new JSlider(50, 95, 80);
     private final CounterStore store;
     private CounterStore.State state;
     private long session;
-    private volatile double threshold = 0.80;
+    private volatile double threshold = sensitivity.getValue() / 100.0;
+    private double bestSimilarity = Double.NaN;
     private Timer countdown;
     private Thread task;
     private WindowsHotkey hotkey;
@@ -142,9 +144,17 @@ public final class Main {
         tuning.add(label("Mais deteções ← Sensibilidade → Menos", 12, MUTED));
         sensitivity.setOpaque(false);
         sensitivity.setToolTipText("Move para a esquerda se a aplicação falhar aberturas; para a direita se contar outros sons.");
-        sensitivity.addChangeListener(event -> threshold = sensitivity.getValue() / 100.0);
+        sensitivity.addChangeListener(event -> {
+            threshold = sensitivity.getValue() / 100.0;
+            refreshSimilarity();
+        });
         tuning.add(sensitivity);
         content.add(tuning);
+        content.add(Box.createVerticalStrut(4));
+        similarityLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        similarityLabel.setMaximumSize(new Dimension(Integer.MAX_VALUE, similarityLabel.getPreferredSize().height));
+        content.add(similarityLabel);
+        refreshSimilarity();
         content.add(Box.createVerticalStrut(15));
         status.setAlignmentX(Component.LEFT_ALIGNMENT);
         samplesLabel.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -157,6 +167,11 @@ public final class Main {
         window.pack();
         window.setLocationRelativeTo(null);
         refresh();
+    }
+
+    private void refreshSimilarity() {
+        String best = Double.isNaN(bestSimilarity) ? "—" : "%.1f%%".formatted(bestSimilarity * 100);
+        similarityLabel.setText("Melhor semelhança: %s  ·  Mínimo para contar: %d%%".formatted(best, sensitivity.getValue()));
     }
 
     private void startShortcut() {
@@ -244,6 +259,8 @@ public final class Main {
         }
         recording = false;
         level.setValue(0);
+        bestSimilarity = Double.NaN;
+        refreshSimilarity();
         refresh();
     }
 
@@ -264,7 +281,14 @@ public final class Main {
                 long now = System.nanoTime();
                 if (now >= nextMeter) {
                     int value = (int) (Math.min(1, Math.sqrt(peak)) * 100);
-                    post(sender, () -> level.setValue(value));
+                    double similarity = detector.bestSimilarity();
+                    post(sender, () -> {
+                        level.setValue(value);
+                        if (Double.compare(bestSimilarity, similarity) != 0) {
+                            bestSimilarity = similarity;
+                            refreshSimilarity();
+                        }
+                    });
                     peak = 0;
                     nextMeter = now + 100_000_000L;
                 }

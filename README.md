@@ -37,6 +37,8 @@ Se o terminal disser que `java` não é reconhecido, fecha-o e volta a abri-lo d
 
 Se a barra **Nível do som do Windows** ficar parada, confirma que o Fortnite está a reproduzir som na saída predefinida. Se mudares de auscultadores ou colunas enquanto o contador está aberto, pausa e volta a iniciar a contagem para ligar à nova saída.
 
+Se a barra mexer mas a contagem ficar igual, pausa e volta a iniciar a contagem para repor a **Melhor semelhança**. Abre um baú e compara o valor com o **Mínimo para contar**. Se ficar um pouco abaixo, move a sensibilidade para a esquerda e testa noutra abertura. Se a semelhança for baixa, usa **Ouvir trecho** ao gravar uma nova amostra e recorta o som de abertura com menos música, passos ou ataques. Depois, testa também alguns segundos sem abrir baús para verificar se o contador soma por engano.
+
 Se o som não for detetado, carrega uma vez em **F9** para somar um baú à sessão e ao total, mesmo com o Fortnite em primeiro plano. O atalho está ativo ao abrir a aplicação. Podes desmarcar **Atalho global F9 (+1)** para libertar a tecla, por exemplo se já a usas no jogo.
 
 Se a aplicação contar um baú a mais, clica em **Remover 1 baú**. Isso retira um do total guardado e reduz a contagem da sessão, se estiver acima de zero. Podes corrigir o total mesmo depois de reabrir a aplicação.
