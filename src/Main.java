@@ -5,6 +5,7 @@ import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
@@ -25,6 +26,7 @@ public final class Main {
     private final JLabel similarityLabel = label("", 13, MUTED);
     private final JProgressBar level = new JProgressBar(0, 100);
     private final JProgressBar liveSimilarity = new JProgressBar(0, 100);
+    private final JProgressBar imageSimilarity = new JProgressBar(0, 100);
     private final JButton monitorButton = new JButton("Iniciar contagem");
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
@@ -32,10 +34,16 @@ public final class Main {
     private final JButton resetButton = new JButton("Repor contagem");
     private final JButton reviewButton = new JButton("Rever amostras");
     private final JButton previewButton = new JButton("Ouvir áudio recebido");
+    private final JButton imageButton = new JButton("Calibrar imagem");
+    private final JComboBox<Mode> detectionMode = new JComboBox<>(Mode.values());
+    private final RoomPanel group = new RoomPanel();
     private final JCheckBox addShortcut = new JCheckBox("Atalho global F9 (+1)", true);
     private final JCheckBox subtractShortcut = new JCheckBox("Atalho global F8 (−1)", true);
     private final JSlider sensitivity = new JSlider(50, 95, 80);
     private final CounterStore store;
+    private final Path imageFile;
+    private final Path modeFile;
+    private ScreenDetector.Calibration imageCalibration;
     private CounterStore.State state;
     private long session;
     private volatile double threshold = sensitivity.getValue() / 100.0;
@@ -45,6 +53,25 @@ public final class Main {
     private WindowsHotkey addHotkey;
     private WindowsHotkey subtractHotkey;
     private boolean recording;
+
+    private enum Mode {
+        SOUND("Som", true, false), IMAGE("Imagem", false, true), BOTH("Som e imagem", true, true);
+
+        final String label;
+        final boolean audio;
+        final boolean image;
+
+        Mode(String label, boolean audio, boolean image) {
+            this.label = label;
+            this.audio = audio;
+            this.image = image;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
 
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
@@ -63,7 +90,7 @@ public final class Main {
                     if (lock.tryLock() == null) {
                         throw new IOException("O contador já está aberto.");
                     }
-                    app = new Main(store, store.load());
+                    app = new Main(store, store.load(), data);
                 } catch (IOException | RuntimeException error) {
                     lock.close();
                     throw error;
@@ -73,6 +100,7 @@ public final class Main {
                     public void windowClosed(WindowEvent event) {
                         app.addHotkey.close();
                         app.subtractHotkey.close();
+                        app.group.close();
                         app.stopTask();
                         try {
                             lock.close();
@@ -84,7 +112,7 @@ public final class Main {
                 app.addHotkey = app.startShortcut(app.addShortcut, WindowsHotkey.VK_F9, "F9", 1);
                 app.subtractHotkey = app.startShortcut(app.subtractShortcut, WindowsHotkey.VK_F8, "F8", -1);
                 app.window.setVisible(true);
-                if (!app.state.samples().isEmpty()) {
+                if (app.canMonitor()) {
                     app.startMonitoring();
                 }
             } catch (IOException error) {
@@ -93,9 +121,23 @@ public final class Main {
         });
     }
 
-    private Main(CounterStore store, CounterStore.State state) {
+    private Main(CounterStore store, CounterStore.State state, Path data) {
         this.store = store;
         this.state = state;
+        imageFile = data.resolve("imagem.dat");
+        modeFile = data.resolve("modo.txt");
+        try {
+            imageCalibration = ScreenDetector.load(imageFile);
+        } catch (IOException error) {
+            System.err.println(error.getMessage());
+        }
+        try {
+            if (Files.exists(modeFile)) {
+                detectionMode.setSelectedItem(Mode.valueOf(Files.readString(modeFile).strip()));
+            }
+        } catch (IOException | IllegalArgumentException error) {
+            System.err.println(error.getMessage());
+        }
         JPanel content = new JPanel();
         content.setBackground(new Color(242, 245, 252));
         content.setBorder(new EmptyBorder(24, 26, 24, 26));
@@ -148,6 +190,18 @@ public final class Main {
         audioActions.add(reviewButton);
         audioActions.add(previewButton);
         content.add(audioActions);
+        var modes = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
+        modes.setOpaque(false);
+        modes.setAlignmentX(Component.LEFT_ALIGNMENT);
+        modes.add(new JLabel("Deteção"));
+        modes.add(detectionMode);
+        modes.add(imageButton);
+        detectionMode.addActionListener(event -> switchMode());
+        imageButton.addActionListener(event -> calibrateImage());
+        content.add(Box.createVerticalStrut(6));
+        content.add(modes);
+        content.add(Box.createVerticalStrut(6));
+        content.add(group);
         JPanel shortcuts = new JPanel(new FlowLayout(FlowLayout.LEFT, 5, 0));
         shortcuts.setOpaque(false);
         shortcuts.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -159,7 +213,7 @@ public final class Main {
         content.add(shortcuts);
         content.add(Box.createVerticalStrut(15));
 
-        JPanel tuning = new JPanel(new GridLayout(3, 2, 12, 4));
+        JPanel tuning = new JPanel(new GridLayout(4, 2, 12, 4));
         tuning.setOpaque(false);
         tuning.setAlignmentX(Component.LEFT_ALIGNMENT);
         tuning.add(label("Nível do som do Windows", 13, MUTED));
@@ -169,6 +223,11 @@ public final class Main {
         liveSimilarity.setToolTipText("Semelhança do áudio recebido com a amostra mais parecida.");
         updateLiveSimilarity(Double.NaN);
         tuning.add(liveSimilarity);
+        tuning.add(label("Semelhança da imagem", 13, MUTED));
+        imageSimilarity.setStringPainted(true);
+        imageSimilarity.setToolTipText("A zona precisa de atingir 88% de semelhança em duas imagens seguidas.");
+        updateMeter(imageSimilarity, Double.NaN);
+        tuning.add(imageSimilarity);
         tuning.add(label("Mais deteções ← Sensibilidade → Menos", 12, MUTED));
         sensitivity.setOpaque(false);
         sensitivity.setToolTipText("Move para a esquerda se a aplicação falhar aberturas; para a direita se contar outros sons.");
@@ -194,17 +253,45 @@ public final class Main {
         window.setMinimumSize(new Dimension(560, 350));
         window.pack();
         window.setLocationRelativeTo(null);
+        showIdleStatus();
         refresh();
+    }
+
+    private Mode mode() {
+        return (Mode) detectionMode.getSelectedItem();
+    }
+
+    private boolean canMonitor() {
+        return (!mode().audio || !state.samples().isEmpty()) && (!mode().image || imageCalibration != null);
+    }
+
+    private void switchMode() {
+        boolean resume = task != null && !recording;
+        stopTask();
+        try {
+            Files.writeString(modeFile, mode().name());
+        } catch (IOException error) {
+            showError("Não foi possível guardar o modo de deteção. " + error.getMessage());
+        }
+        if (resume && canMonitor()) {
+            startMonitoring();
+        } else {
+            showIdleStatus();
+        }
     }
 
     private void refreshSimilarity() {
         String best = Double.isNaN(bestSimilarity) ? "—" : "%.1f%%".formatted(bestSimilarity * 100);
-        similarityLabel.setText("Melhor semelhança: %s  ·  Mínimo para contar: %d%%".formatted(best, sensitivity.getValue()));
+        similarityLabel.setText("Melhor semelhança do som: %s  ·  Mínimo para contar: %d%%".formatted(best, sensitivity.getValue()));
     }
 
     private void updateLiveSimilarity(double similarity) {
-        liveSimilarity.setValue(Double.isNaN(similarity) ? 0 : (int) Math.round(similarity * 100));
-        liveSimilarity.setString(Double.isNaN(similarity) ? "—" : "%.1f%%".formatted(similarity * 100));
+        updateMeter(liveSimilarity, similarity);
+    }
+
+    private static void updateMeter(JProgressBar meter, double similarity) {
+        meter.setValue(Double.isNaN(similarity) ? 0 : (int) Math.round(similarity * 100));
+        meter.setString(Double.isNaN(similarity) ? "—" : "%.1f%%".formatted(similarity * 100));
     }
 
     private WindowsHotkey startShortcut(JCheckBox shortcut, int key, String keyName, int amount) {
@@ -255,14 +342,17 @@ public final class Main {
         sessionLabel.setText(String.valueOf(session));
         totalLabel.setText(String.valueOf(state.total()));
         int count = state.samples().size();
-        samplesLabel.setText(count == 1 ? "1 amostra guardada" : count + " amostras guardadas");
+        String samples = count == 1 ? "1 amostra guardada" : count + " amostras guardadas";
+        samplesLabel.setText(imageCalibration == null ? samples : samples + " · Imagem calibrada");
         subtractButton.setEnabled(state.total() > 0);
         resetButton.setEnabled(state.total() > 0);
-        monitorButton.setEnabled(!recording && count > 0);
+        monitorButton.setEnabled(!recording && canMonitor());
         monitorButton.setText(task != null && !recording ? "Pausar contagem" : "Iniciar contagem");
         calibrateButton.setEnabled(!recording);
         reviewButton.setEnabled(!recording && count > 0);
         previewButton.setEnabled(!recording);
+        imageButton.setEnabled(!recording);
+        detectionMode.setEnabled(!recording);
     }
 
     private boolean save(CounterStore.State updated) {
@@ -283,6 +373,7 @@ public final class Main {
         }
         if (save(new CounterStore.State(state.total() + amount, state.samples()))) {
             session = Math.max(0, session + amount);
+            group.adjust(amount);
             refresh();
         }
     }
@@ -311,46 +402,91 @@ public final class Main {
         recording = false;
         level.setValue(0);
         updateLiveSimilarity(Double.NaN);
+        updateMeter(imageSimilarity, Double.NaN);
         bestSimilarity = Double.NaN;
         refreshSimilarity();
         refresh();
     }
 
     private void startMonitoring() {
-        var detector = new ChestDetector(state.samples().stream().map(CounterStore.Sample::fingerprint).toList());
-        status.setText("A ligar à saída de áudio…");
-        startTask((audio, sender) -> {
-            post(sender, () -> status.setText("A ouvir a saída de áudio do Windows."));
-            long nextMeter = 0;
-            float peak = 0;
-            while (!sender.isInterrupted()) {
-                float[] chunk = audio.poll();
-                peak = Math.max(peak, peak(chunk));
-                int detections = detector.accept(chunk, threshold);
-                if (detections > 0) {
-                    post(sender, () -> changeCount(detections));
-                }
-                long now = System.nanoTime();
-                if (now >= nextMeter) {
-                    int value = (int) (Math.min(1, Math.sqrt(peak)) * 100);
-                    double similarity = detector.bestSimilarity();
-                    double current = detector.takeRecentSimilarity();
-                    post(sender, () -> {
-                        level.setValue(value);
-                        updateLiveSimilarity(current);
-                        if (Double.compare(bestSimilarity, similarity) != 0) {
-                            bestSimilarity = similarity;
-                            refreshSimilarity();
-                        }
-                    });
-                    peak = 0;
-                    nextMeter = now + 100_000_000L;
-                }
-                if (chunk.length == 0) {
-                    Thread.sleep(8);
-                }
+        Mode mode = mode();
+        var sound = mode.audio
+                ? new ChestDetector(state.samples().stream().map(CounterStore.Sample::fingerprint).toList()) : null;
+        ScreenDetector.Calibration calibration = mode.image ? imageCalibration : null;
+        var image = calibration == null ? null : new ScreenDetector(calibration);
+        status.setText("A iniciar a deteção…");
+        startTask(sender -> {
+            try (var audio = sound == null ? null : new WindowsAudio()) {
+                monitorInputs(sender, mode, sound, audio, image, calibration);
             }
         });
+    }
+
+    private void monitorInputs(Thread sender, Mode mode, ChestDetector sound, WindowsAudio audio,
+                               ScreenDetector image, ScreenDetector.Calibration calibration)
+            throws AWTException, InterruptedException {
+        if (calibration != null && !calibration.display().equals(ScreenDetector.primaryDisplay())) {
+            throw new IllegalStateException("O tamanho do ecrã mudou. Volta a calibrar a imagem.");
+        }
+        Robot screen = image == null ? null : new Robot();
+        var merge = new DetectionMerge();
+        post(sender, () -> status.setText(switch (mode) {
+            case SOUND -> "A ouvir a saída de áudio do Windows.";
+            case IMAGE -> "A observar a zona de imagem calibrada.";
+            case BOTH -> "A observar a imagem e a ouvir o áudio do Windows.";
+        }));
+        long nextImage = 0;
+        long nextMeter = 0;
+        float peak = 0;
+        double visualScore = Double.NaN;
+        while (!sender.isInterrupted()) {
+            long now = System.nanoTime();
+            int detections = 0;
+            boolean idle = true;
+            if (audio != null) {
+                float[] chunk = audio.poll();
+                idle = chunk.length == 0;
+                peak = Math.max(peak, peak(chunk));
+                int rawDetections = sound.accept(chunk, threshold);
+                for (int i = 0; i < rawDetections; i++) {
+                    if (image == null || merge.count(true, now)) {
+                        detections++;
+                    }
+                }
+            }
+            if (screen != null && now >= nextImage) {
+                var reading = image.observe(screen.createScreenCapture(calibration.area()));
+                visualScore = reading.similarity();
+                if (reading.appeared() && (sound == null || merge.count(false, now))) {
+                    detections++;
+                }
+                nextImage = now + 125_000_000L;
+            }
+            if (detections > 0) {
+                int confirmed = detections;
+                post(sender, () -> changeCount(confirmed));
+            }
+            if (now >= nextMeter) {
+                int value = (int) (Math.min(1, Math.sqrt(peak)) * 100);
+                double similarity = sound == null ? Double.NaN : sound.bestSimilarity();
+                double current = sound == null ? Double.NaN : sound.takeRecentSimilarity();
+                double visual = visualScore;
+                post(sender, () -> {
+                    level.setValue(value);
+                    updateLiveSimilarity(current);
+                    updateMeter(imageSimilarity, visual);
+                    if (Double.compare(bestSimilarity, similarity) != 0) {
+                        bestSimilarity = similarity;
+                        refreshSimilarity();
+                    }
+                });
+                peak = 0;
+                nextMeter = now + 100_000_000L;
+            }
+            if (idle) {
+                Thread.sleep(audio == null ? 30 : 8);
+            }
+        }
     }
 
     private void startCalibration() {
@@ -364,6 +500,13 @@ public final class Main {
             return;
         }
         boolean resume = task != null;
+        beginCalibration(() -> {
+            status.setText("A gravar. Abre um baú agora.");
+            record(CounterStore.RECORDING_SECONDS, clip -> finishCalibration(clip, resume));
+        });
+    }
+
+    private void beginCalibration(Runnable capture) {
         stopTask();
         recording = true;
         refresh();
@@ -377,28 +520,70 @@ public final class Main {
             }
             countdown.stop();
             countdown = null;
-            status.setText("A gravar. Abre um baú agora.");
-            record(CounterStore.RECORDING_SECONDS, clip -> finishCalibration(clip, resume));
+            capture.run();
         });
         countdown.start();
     }
 
     private void record(int seconds, Consumer<float[]> completion) {
-        startTask((audio, sender) -> {
-            float[] clip = new float[WindowsAudio.SAMPLE_RATE * seconds];
-            int written = 0;
-            long end = System.nanoTime() + seconds * 1_000_000_000L;
-            while (written < clip.length && System.nanoTime() < end && !sender.isInterrupted()) {
-                float[] chunk = audio.poll();
-                int length = Math.min(chunk.length, clip.length - written);
-                System.arraycopy(chunk, 0, clip, written, length);
-                written += length;
-                if (length == 0) {
-                    Thread.sleep(8);
-                }
+        startTask(sender -> {
+            try (var audio = new WindowsAudio()) {
+                recordAudio(audio, sender, seconds, completion);
             }
-            float[] result = Arrays.copyOf(clip, written);
-            post(sender, () -> completion.accept(result));
+        });
+    }
+
+    private void recordAudio(WindowsAudio audio, Thread sender, int seconds, Consumer<float[]> completion)
+            throws InterruptedException {
+        float[] clip = new float[WindowsAudio.SAMPLE_RATE * seconds];
+        int written = 0;
+        long end = System.nanoTime() + seconds * 1_000_000_000L;
+        while (written < clip.length && System.nanoTime() < end && !sender.isInterrupted()) {
+            float[] chunk = audio.poll();
+            int length = Math.min(chunk.length, clip.length - written);
+            System.arraycopy(chunk, 0, clip, written, length);
+            written += length;
+            if (length == 0) {
+                Thread.sleep(8);
+            }
+        }
+        float[] result = Arrays.copyOf(clip, written);
+        post(sender, () -> completion.accept(result));
+    }
+
+    private void calibrateImage() {
+        int answer = JOptionPane.showConfirmDialog(window, """
+                Usa o Fortnite em janela sem bordas no monitor principal.
+                Depois de confirmares, tens 5 segundos para voltar ao jogo.
+                Abre um baú durante os 8 segundos seguintes.
+                """, "Calibrar imagem", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (answer != JOptionPane.OK_OPTION) {
+            return;
+        }
+        boolean resume = task != null;
+        beginCalibration(() -> {
+            status.setText("A capturar o ecrã. Abre um baú agora.");
+            startTask(sender -> {
+                Rectangle display = ScreenDetector.primaryDisplay();
+                var frames = ScreenCalibration.capture(display);
+                post(sender, () -> {
+                    stopTask();
+                    window.toFront();
+                    var result = ScreenCalibration.choose(window, display, frames);
+                    boolean saved = false;
+                    if (result != null) {
+                        try {
+                            ScreenDetector.save(imageFile, result);
+                            imageCalibration = result;
+                            saved = true;
+                        } catch (IOException error) {
+                            showError("Não foi possível guardar a amostra visual. " + error.getMessage());
+                        }
+                    }
+                    refresh();
+                    resumeAfterPreview(resume || (saved && mode().image));
+                });
+            });
         });
     }
 
@@ -423,7 +608,7 @@ public final class Main {
             }
         }
         refresh();
-        if (saved || resume) {
+        if ((saved || resume) && canMonitor()) {
             startMonitoring();
         } else {
             showIdleStatus();
@@ -431,7 +616,13 @@ public final class Main {
     }
 
     private void showIdleStatus() {
-        status.setText(state.samples().isEmpty() ? "Grava uma amostra para começar." : "Contagem em pausa.");
+        if (mode().audio && state.samples().isEmpty()) {
+            status.setText("Grava uma amostra de som para este modo.");
+        } else if (mode().image && imageCalibration == null) {
+            status.setText("Calibra a imagem para começar.");
+        } else {
+            status.setText("Contagem em pausa.");
+        }
     }
 
     private void reviewSamples() {
@@ -552,7 +743,7 @@ public final class Main {
         if (!window.isDisplayable()) {
             return;
         }
-        if (resume && !state.samples().isEmpty()) {
+        if (resume && canMonitor()) {
             startMonitoring();
         } else {
             showIdleStatus();
@@ -563,19 +754,18 @@ public final class Main {
         JOptionPane.showMessageDialog(window, message, "Contador de Baús", JOptionPane.ERROR_MESSAGE);
     }
 
-    private void startTask(AudioTask action) {
-        task = Thread.ofPlatform().daemon().name("Windows audio capture").unstarted(() -> {
+    private void startTask(CaptureTask action) {
+        task = Thread.ofPlatform().daemon().name("Captura do Windows").unstarted(() -> {
             Thread sender = Thread.currentThread();
-            try (var audio = new WindowsAudio()) {
-                action.run(audio, sender);
+            try {
+                action.run(sender);
             } catch (InterruptedException ignored) {
                 sender.interrupt();
-            } catch (RuntimeException | LinkageError error) {
+            } catch (RuntimeException | LinkageError | AWTException error) {
                 post(sender, () -> {
                     stopTask();
-                    status.setText("A captura de áudio parou.");
-                    showError("A captura de áudio falhou. " + error.getMessage()
-                            + "\nVerifica a saída de áudio e volta a iniciar.");
+                    status.setText("A captura parou.");
+                    showError("A captura falhou. " + error.getMessage());
                 });
             }
         });
@@ -599,8 +789,8 @@ public final class Main {
         return peak;
     }
 
-    private interface AudioTask {
-        void run(WindowsAudio audio, Thread sender) throws InterruptedException;
+    private interface CaptureTask {
+        void run(Thread sender) throws InterruptedException, AWTException;
     }
 
     @SuppressWarnings("serial")

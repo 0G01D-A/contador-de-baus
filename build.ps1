@@ -24,7 +24,7 @@ if ($LASTEXITCODE -ne 0) { throw 'jar failed.' }
 
 $packageOptions = @(
     '--name', 'Contador de Baus',
-    '--app-version', '1.7.0',
+    '--app-version', '2.0.0',
     '--vendor', 'Contador de Baus',
     '--input', $inputDir,
     '--main-jar', 'contador.jar',

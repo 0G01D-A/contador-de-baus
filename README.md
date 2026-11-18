@@ -1,6 +1,6 @@
 # Contador de Baús
 
-Aplicação para Windows que conta aberturas de baús no Fortnite pelo som. Mostra a contagem da sessão e o total guardado entre utilizações.
+Aplicação para Windows que conta aberturas de baús no Fortnite por som, imagem ou ambos. Mostra a contagem pessoal e pode somar as contagens de vários jogadores numa sala.
 
 ## Instalar noutro PC
 
@@ -38,6 +38,19 @@ Se o terminal disser que `java` não é reconhecido, fecha-o e volta a abri-lo d
 
 ## Calibrar e testar no Fortnite
 
+Escolhe em **Deteção** o modo **Som**, **Imagem** ou **Som e imagem**. No modo combinado, basta que um dos métodos reconheça a abertura. Quando os dois métodos detetam uma abertura com até 1,25 segundos de diferença, a aplicação tenta juntar as deteções num só baú. Dois baús diferentes abertos quase ao mesmo tempo podem ficar emparelhados. Calibra ambos os métodos antes de usar esse modo.
+
+### Deteção por imagem
+
+1. Usa o Fortnite em **janela sem bordas** no monitor principal.
+2. Clica em **Calibrar imagem**, volta ao jogo em cinco segundos e abre um baú nos oito segundos que se seguem.
+3. Percorre as imagens com o seletor. Escolhe uma em que haja um aviso ou símbolo visual exclusivo da abertura. Arrasta um retângulo pequeno à volta desse sinal e clica em **Guardar zona**.
+4. Escolhe **Imagem** ou **Som e imagem**, inicia a contagem e abre outro baú. A barra **Semelhança da imagem** mostra a comparação com a zona guardada.
+
+A zona tem de ficar no mesmo sítio do ecrã. Volta a calibrar se mudares a resolução ou o tamanho da interface. Se a abertura não mostrar um sinal visual reconhecível, usa o som ou os atalhos. Durante a calibração, as imagens do ecrã ficam em memória. A aplicação guarda apenas a zona e o padrão usado para comparar.
+
+### Deteção por som
+
 1. No Fortnite, encontra um baú e deixa-o fechado. Confirma que o jogo usa a saída predefinida do Windows.
 2. Na aplicação, escolhe **Gravar som de baú**. Depois de confirmares, tens 5 segundos para voltar ao jogo e 7 segundos de gravação. Abre um baú durante a gravação.
 3. Volta à aplicação. Ajusta **Início** e **Fim** de forma a incluir o som da abertura com o mínimo de ruído de fundo. Confirma com **Ouvir trecho** e clica em **Guardar amostra**.
@@ -65,6 +78,15 @@ Se o contador falhar aberturas, experimenta mover a sensibilidade para a esquerd
 - **Ouvir áudio recebido** capta os próximos cinco segundos da saída predefinida do Windows. Reproduz som no Fortnite enquanto a captura decorre e depois clica em **Reproduzir gravação**. Esta gravação é temporária. A aplicação pausa a contagem durante o teste e retoma-a quando fechas a janela, se já estava ativa.
 
 A deteção usa o áudio reproduzido na saída predefinida do Windows. Outros sons nessa saída, como música, chat de voz e efeitos do jogo, podem interferir. O total, as referências acústicas, as gravações de calibração e os respetivos recortes ficam guardados localmente em `%LOCALAPPDATA%\ContadorDeBaus`.
+
+## Contagem em grupo
+
+1. Cada jogador abre a versão atual do contador no seu PC. Os PCs devem conseguir comunicar pela **mesma rede local** ou por uma **VPN partilhada**.
+2. O anfitrião escolhe **Contagem em grupo → Criar sala**. Se aparecerem vários endereços, escolhe o da rede ou VPN que os outros jogadores usam. Clica em **Copiar convite** e envia-o aos jogadores que queres convidar.
+3. Os outros jogadores escolhem **Contagem em grupo → Entrar com convite** e colam o convite. O **Total do grupo** soma as aberturas registadas na sala a partir desse momento, mantendo também os totais pessoais.
+4. As deteções automáticas e o **F9** somam um à contribuição do jogador. O **F8** e **Remover 1 baú** corrigem a contribuição desse jogador até zero. **Repor contagem** só repõe os contadores pessoais.
+
+O anfitrião precisa de manter o contador aberto para a sala continuar. As salas são temporárias. Se a ligação falhar, confirma o endereço do convite, a rede e as permissões no Windows para ligações à porta TCP 47855 na rede privada. A aplicação envia contagens cifradas entre os PCs. O áudio e as imagens ficam em cada PC.
 
 ## Compilar
 
