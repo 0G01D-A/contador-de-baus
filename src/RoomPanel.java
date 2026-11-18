@@ -3,6 +3,7 @@ import java.awt.*;
 import java.awt.datatransfer.StringSelection;
 import java.io.IOException;
 import java.net.*;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.function.Consumer;
 
@@ -13,11 +14,14 @@ final class RoomPanel extends JPanel implements AutoCloseable {
     private final JLabel status = new JLabel("Sem sala", SwingConstants.CENTER);
     private final JButton settings = new JButton("Contagem em grupo");
     private final Consumer<Boolean> membershipChanged;
+    private final Path roomFile;
     private SharedRoom room;
+    private RoomHistory last;
     private long generation;
 
-    RoomPanel(Consumer<Boolean> membershipChanged) {
+    RoomPanel(Path roomFile, Consumer<Boolean> membershipChanged) {
         super(new BorderLayout(0, 12));
+        this.roomFile = roomFile;
         this.membershipChanged = membershipChanged;
         setOpaque(false);
         var counts = new JPanel(new GridLayout(1, 2, 10, 0));
@@ -45,8 +49,42 @@ final class RoomPanel extends JPanel implements AutoCloseable {
 
     void adjust(int amount) {
         if (room != null) {
-            own.setText(Long.toString(room.adjust(amount)));
+            try {
+                own.setText(Long.toString(room.adjust(amount)));
+                if (room.history().host) {
+                    total.setText(Long.toString(room.history().total()));
+                }
+            } catch (IOException error) {
+                showError("Não foi possível guardar a contagem. ", error);
+            }
         }
+    }
+
+    void restore() {
+        try {
+            last = RoomHistory.load(roomFile);
+            if (last != null) {
+                showCounts(last);
+                if (last.shouldResume()) {
+                    resume();
+                } else {
+                    status.setText("Última sala guardada");
+                }
+            }
+        } catch (IOException | IllegalArgumentException error) {
+            status.setText(last == null ? "Não foi possível ler a última sala."
+                    : "Última sala guardada · ligação indisponível");
+        }
+    }
+
+    private void resume() throws IOException {
+        var restored = RoomHistory.load(roomFile);
+        if (restored == null) {
+            throw new IOException("A sala guardada não foi encontrada.");
+        }
+        long token = ++generation;
+        room = SharedRoom.resume(restored, view -> update(token, view));
+        joined("A retomar a sala…");
     }
 
     private void manage() {
@@ -60,41 +98,63 @@ final class RoomPanel extends JPanel implements AutoCloseable {
                 Toolkit.getDefaultToolkit().getSystemClipboard().setContents(
                         new StringSelection(invitation.getText()), null);
             } else if (choice == 1) {
-                close();
+                try {
+                    room.history().setResume(false);
+                    close();
+                } catch (IOException error) {
+                    showError("Não foi possível guardar a saída da sala. ", error);
+                }
             }
             return;
         }
-        var options = new Object[]{"Criar sala", "Entrar com convite", "Cancelar"};
+        var options = last == null ? new Object[]{"Criar sala", "Entrar com convite", "Cancelar"}
+                : new Object[]{"Criar sala", "Entrar com convite", "Retomar última sala", "Cancelar"};
         int choice = JOptionPane.showOptionDialog(this,
                 "Cria uma sala ou cola o convite de outro jogador.",
                 "Contagem em grupo", JOptionPane.DEFAULT_OPTION, JOptionPane.PLAIN_MESSAGE,
-                null, options, options[2]);
+                null, options, options[options.length - 1]);
         long token = ++generation;
         try {
             if (choice == 0) {
                 String address = chooseAddress();
                 if (address != null) {
-                    room = SharedRoom.host(address, SharedRoom.PORT, view -> update(token, view));
+                    room = SharedRoom.host(address, SharedRoom.PORT, roomFile, view -> update(token, view));
                     joined("A criar sala…");
                     manage();
                 }
             } else if (choice == 1) {
                 String invitation = JOptionPane.showInputDialog(this, "Cola o convite da sala.");
                 if (invitation != null) {
-                    room = SharedRoom.join(invitation, view -> update(token, view));
-                    joined("A ligar à sala…");
+                    if (last != null && invitation.strip().equals(last.invite)) {
+                        resume();
+                    } else {
+                        room = SharedRoom.join(invitation, roomFile, view -> update(token, view));
+                        joined("A ligar à sala…");
+                    }
                 }
+            } else if (choice == 2 && last != null) {
+                resume();
             }
         } catch (IOException | IllegalArgumentException error) {
-            JOptionPane.showMessageDialog(this, "Não foi possível abrir a sala. " + error.getMessage(),
-                    "Contagem em grupo", JOptionPane.ERROR_MESSAGE);
+            showError("Não foi possível abrir a sala. ", error);
         }
     }
 
     private void joined(String message) {
-        own.setText("0");
+        last = room.history();
+        showCounts(last);
         status.setText(message);
         membershipChanged.accept(true);
+    }
+
+    private void showCounts(RoomHistory history) {
+        total.setText(Long.toString(history.total()));
+        own.setText(Long.toString(history.own().total()));
+    }
+
+    private void showError(String message, Exception error) {
+        JOptionPane.showMessageDialog(this, message + error.getMessage(),
+                "Contagem em grupo", JOptionPane.ERROR_MESSAGE);
     }
 
     private String chooseAddress() throws SocketException {
@@ -134,9 +194,10 @@ final class RoomPanel extends JPanel implements AutoCloseable {
             room.close();
             room = null;
         }
-        total.setText("—");
-        own.setText("—");
-        status.setText("Sem sala");
+        if (last != null) {
+            showCounts(last);
+            status.setText("Última sala guardada");
+        }
         membershipChanged.accept(false);
     }
 }

@@ -16,7 +16,7 @@ public final class Main {
     private final JButton add = new JButton();
     private final JButton subtract = new JButton();
     private final JLabel shortcutStatus = new JLabel("Entra numa sala para ativar os atalhos.", SwingConstants.CENTER);
-    private final RoomPanel group = new RoomPanel(this::updateMembership);
+    private final RoomPanel group;
     private final Path settingsFile;
     private Bindings binds;
     private WindowsHotkey addHotkey;
@@ -51,6 +51,7 @@ public final class Main {
                         }
                     });
                     app.window.setVisible(true);
+                    app.group.restore();
                 } catch (IOException | RuntimeException error) {
                     lock.close();
                     throw error;
@@ -63,6 +64,7 @@ public final class Main {
 
     private Main(Path settingsFile) {
         this.settingsFile = settingsFile;
+        group = new RoomPanel(settingsFile.resolveSibling("ultima-sala.dat"), this::updateMembership);
         try {
             binds = Bindings.load(settingsFile);
         } catch (IOException | IllegalArgumentException error) {

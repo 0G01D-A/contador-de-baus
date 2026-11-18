@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.*;
@@ -12,21 +13,17 @@ import javax.crypto.spec.SecretKeySpec;
 
 final class SharedRoom implements AutoCloseable {
     static final int PORT = 47855;
-    private static final long MAX_CONTRIBUTION = 1_000_000_000L;
-    private static final int MAX_PARTICIPANTS = 64;
     private static final SecureRandom RANDOM = new SecureRandom();
     private static final int REQUEST_BYTES = 40;
     private static final int RESPONSE_BYTES = 16;
     private static final int TIMEOUT_MS = 1500;
     private final Invite invitation;
     private final Server server;
-    private final UUID participant = UUID.randomUUID();
+    private final RoomHistory history;
     private final Thread client;
     private final Semaphore wake = new Semaphore(0);
-    private Contribution contribution = new Contribution(0, 0);
 
     record View(long total, boolean online) {}
-    private record Contribution(long revision, long total) {}
 
     private record Invite(String host, int port, byte[] key) {
         static Invite parse(String text) {
@@ -49,19 +46,53 @@ final class SharedRoom implements AutoCloseable {
         }
     }
 
-    static SharedRoom host(String address, int port, Consumer<View> update) throws IOException {
+    static SharedRoom host(String address, int port, Path file, Consumer<View> update) throws IOException {
         byte[] key = new byte[32];
         RANDOM.nextBytes(key);
-        var server = new Server(address, port, key);
-        return new SharedRoom(new Invite(address, server.socket.getLocalPort(), key), server, update);
+        ServerSocket socket = listen(address, port);
+        try {
+            var invite = new Invite(address, socket.getLocalPort(), key);
+            var history = RoomHistory.create(file, invite.link(), true);
+            return new SharedRoom(invite, history, new Server(socket, key, history), update);
+        } catch (IOException | RuntimeException error) {
+            socket.close();
+            throw error;
+        }
     }
 
-    static SharedRoom join(String invitation, Consumer<View> update) {
-        return new SharedRoom(Invite.parse(invitation), null, update);
+    static SharedRoom join(String invitation, Path file, Consumer<View> update) throws IOException {
+        var invite = Invite.parse(invitation);
+        return new SharedRoom(invite, RoomHistory.create(file, invite.link(), false), null, update);
     }
 
-    private SharedRoom(Invite invitation, Server server, Consumer<View> update) {
+    static SharedRoom resume(RoomHistory history, Consumer<View> update) throws IOException {
+        var invite = Invite.parse(history.invite);
+        var socket = history.host ? listen(invite.host(), invite.port()) : null;
+        try {
+            history.setResume(true);
+        } catch (IOException error) {
+            if (socket != null) {
+                socket.close();
+            }
+            throw error;
+        }
+        return new SharedRoom(invite, history, socket == null ? null : new Server(socket, invite.key(), history), update);
+    }
+
+    private static ServerSocket listen(String address, int port) throws IOException {
+        var socket = new ServerSocket();
+        try {
+            socket.bind(new InetSocketAddress(address, port));
+            return socket;
+        } catch (IOException | RuntimeException error) {
+            socket.close();
+            throw error;
+        }
+    }
+
+    private SharedRoom(Invite invitation, RoomHistory history, Server server, Consumer<View> update) {
         this.invitation = invitation;
+        this.history = history;
         this.server = server;
         client = Thread.ofPlatform().daemon().name("Contagem em grupo").start(() -> sync(update));
     }
@@ -70,17 +101,14 @@ final class SharedRoom implements AutoCloseable {
         return invitation.link();
     }
 
-    synchronized long adjust(int amount) {
-        long next = Math.clamp(contribution.total() + amount, 0, MAX_CONTRIBUTION);
-        if (next != contribution.total()) {
-            contribution = new Contribution(contribution.revision() + 1, next);
-            wake.release();
-        }
-        return contribution.total();
+    long adjust(int amount) throws IOException {
+        long total = history.adjust(amount);
+        wake.release();
+        return total;
     }
 
-    private synchronized Contribution snapshot() {
-        return contribution;
+    RoomHistory history() {
+        return history;
     }
 
     private void sync(Consumer<View> update) {
@@ -88,9 +116,10 @@ final class SharedRoom implements AutoCloseable {
         while (!Thread.currentThread().isInterrupted()) {
             View view;
             try {
-                view = query(invitation.host(), snapshot());
+                view = history.host ? new View(history.total(), true) : query(history.own());
+                history.received(view.total());
             } catch (IOException | GeneralSecurityException | IllegalArgumentException error) {
-                view = new View(previous == null ? 0 : previous.total(), false);
+                view = new View(history.total(), false);
             }
             if (!view.equals(previous)) {
                 update.accept(view);
@@ -105,13 +134,13 @@ final class SharedRoom implements AutoCloseable {
         }
     }
 
-    private View query(String address, Contribution snapshot) throws IOException, GeneralSecurityException {
+    private View query(RoomHistory.Contribution snapshot) throws IOException, GeneralSecurityException {
         try (var socket = new Socket()) {
-            socket.connect(new InetSocketAddress(address, invitation.port()), TIMEOUT_MS);
+            socket.connect(new InetSocketAddress(invitation.host(), invitation.port()), TIMEOUT_MS);
             socket.setSoTimeout(TIMEOUT_MS);
             long nonce = RANDOM.nextLong();
             byte[] request = ByteBuffer.allocate(REQUEST_BYTES)
-                    .putLong(participant.getMostSignificantBits()).putLong(participant.getLeastSignificantBits())
+                    .putLong(history.id.getMostSignificantBits()).putLong(history.id.getLeastSignificantBits())
                     .putLong(snapshot.revision()).putLong(snapshot.total()).putLong(nonce).array();
             send(socket, invitation.key(), request, (byte) 1);
             var response = receive(socket, invitation.key(), RESPONSE_BYTES, (byte) 2);
@@ -152,6 +181,7 @@ final class SharedRoom implements AutoCloseable {
 
     @Override
     public void close() {
+        history.close();
         client.interrupt();
         if (server != null) {
             server.close();
@@ -163,18 +193,12 @@ final class SharedRoom implements AutoCloseable {
         private final byte[] key;
         private final ExecutorService workers = new ThreadPoolExecutor(0, 8, 30, TimeUnit.SECONDS,
                 new SynchronousQueue<>(), Thread.ofVirtual().factory());
-        private final Map<UUID, Contribution> participants = new HashMap<>();
-        private long total;
+        private final RoomHistory history;
 
-        Server(String address, int port, byte[] key) throws IOException {
+        Server(ServerSocket socket, byte[] key, RoomHistory history) {
             this.key = key;
-            socket = new ServerSocket();
-            try {
-                socket.bind(new InetSocketAddress(address, port));
-            } catch (IOException error) {
-                socket.close();
-                throw error;
-            }
+            this.socket = socket;
+            this.history = history;
             Thread.ofPlatform().daemon().name("Anfitrião da sala").start(this::accept);
         }
 
@@ -198,29 +222,15 @@ final class SharedRoom implements AutoCloseable {
                 connection.setSoTimeout(TIMEOUT_MS);
                 var request = receive(connection, key, REQUEST_BYTES, (byte) 1);
                 var id = new UUID(request.getLong(), request.getLong());
-                var contribution = new Contribution(request.getLong(), request.getLong());
+                var contribution = new RoomHistory.Contribution(request.getLong(), request.getLong());
                 long nonce = request.getLong();
-                long roomTotal = update(id, contribution);
+                long roomTotal = history.accept(id, contribution);
                 byte[] response = ByteBuffer.allocate(RESPONSE_BYTES).putLong(nonce)
                         .putLong(roomTotal).array();
                 send(connection, key, response, (byte) 2);
             } catch (IOException | GeneralSecurityException invalid) {
                 // Drop unauthenticated, invalid, or incomplete requests.
             }
-        }
-
-        private synchronized long update(UUID id, Contribution next) throws IOException {
-            Contribution old = participants.get(id);
-            if (next.revision() < 0 || next.total() < 0 || next.total() > MAX_CONTRIBUTION
-                    || (old == null && participants.size() >= MAX_PARTICIPANTS)) {
-                throw new IOException("Contribuição inválida.");
-            }
-            // The client sends an absolute total with a revision, so retries cannot count twice.
-            if (old == null || old.revision() < next.revision()) {
-                participants.put(id, next);
-                total += next.total() - (old == null ? 0 : old.total());
-            }
-            return total;
         }
 
         @Override

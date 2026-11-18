@@ -20,7 +20,15 @@ java --enable-native-access=ALL-UNNAMED -jar .\contador.jar
 2. Clica em **Copiar convite** e partilha-o em privado.
 3. Os amigos abrem **Contagem em grupo → Entrar com convite** e colam o convite. Podem usar os botões ou os atalhos globais para atualizar a contagem.
 
-Na mesma rede local, o convite funciona diretamente. A sala é temporária e o anfitrião precisa de manter o contador aberto. Cada jogador pode retirar até ao número de baús que adicionou. A contribuição começa em zero ao entrar numa sala.
+Na mesma rede local, o convite funciona diretamente. Cada jogador pode retirar até ao número de baús que adicionou. A contribuição começa em zero quando entras numa sala diferente.
+
+### Retomar a última sala
+
+Quando fechas a aplicação, o último total do grupo e a tua contribuição ficam guardados neste PC. Ao abrir novamente, o contador tenta retomar a mesma sala. Se usaste **Sair da sala**, podes voltar em **Contagem em grupo → Retomar última sala**. Criar ou entrar noutra sala substitui a última guardada.
+
+O anfitrião precisa de reabrir a aplicação para os outros jogadores voltarem a sincronizar. Se estiver desligado, os convidados veem o último total recebido. Se o endereço local do anfitrião ou o endereço público do túnel TCP mudar, a ligação anterior pode deixar de funcionar.
+
+A gravação da sala começa na versão **3.2.0**. As versões anteriores não guardavam as salas após fechar.
 
 ### Jogar pela internet sem VPN
 
