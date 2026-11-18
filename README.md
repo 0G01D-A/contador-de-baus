@@ -34,7 +34,7 @@ Se o serviço mostrar `tcp://1.tcp.ngrok.io:12345`, o convite para o teu amigo f
 
 ## Escolher os atalhos
 
-Abre **Definições → Configurar atalhos** e escolhe uma tecla para **Adicionar baú** e outra para **Retirar baú**. Podes combinar as teclas com **Ctrl**, **Alt** e **Shift**.
+Na janela principal, clica em **Alterar teclas**. Na linha **Adicionar baú** ou **Retirar baú**, clica em **Premir tecla** e carrega na tecla que queres, por exemplo **Y**. Clica em **Guardar**. Também podes escolher pelas listas ou combinar a tecla com **Ctrl**, **Alt** e **Shift**. Estão disponíveis letras, números, teclas numéricas e **F1–F11**.
 
 Os atalhos iniciais são **F9** para adicionar e **F8** para retirar. Os atalhos funcionam com a janela minimizada enquanto estás numa sala. Se o Windows ou outra aplicação já tiver registado uma combinação, o contador avisa e podes escolher outra. As escolhas ficam guardadas neste PC em `%LOCALAPPDATA%\ContadorDeBaus\atalhos.properties`.
 

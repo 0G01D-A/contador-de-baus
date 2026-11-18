@@ -1,5 +1,10 @@
 import javax.swing.*;
 import java.awt.*;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.io.IOException;
@@ -82,6 +87,9 @@ public final class Main {
         var footer = new JPanel(new BorderLayout(0, 8));
         footer.setOpaque(false);
         footer.add(buttons, BorderLayout.NORTH);
+        var changeKeys = new JButton("Alterar teclas");
+        changeKeys.addActionListener(event -> configure());
+        footer.add(changeKeys, BorderLayout.CENTER);
         footer.add(shortcutStatus, BorderLayout.SOUTH);
         content.add(footer, BorderLayout.SOUTH);
 
@@ -110,30 +118,86 @@ public final class Main {
         subtractKey.setSelectedItem(binds.subtract().key());
         subtractModifier.setSelectedItem(binds.subtract().modifiers());
 
-        var options = new JPanel(new GridLayout(2, 3, 8, 8));
+        var options = new JPanel(new GridLayout(2, 4, 8, 8));
         options.add(new JLabel("Adicionar baú"));
         options.add(addModifier);
         options.add(addKey);
+        options.add(captureButton(addKey, addModifier));
         options.add(new JLabel("Retirar baú"));
         options.add(subtractModifier);
         options.add(subtractKey);
+        options.add(captureButton(subtractKey, subtractModifier));
         var choices = new Object[]{"Guardar", "Cancelar"};
-        while (JOptionPane.showOptionDialog(window, options, "Configurar atalhos", JOptionPane.DEFAULT_OPTION,
-                JOptionPane.PLAIN_MESSAGE, null, choices, choices[0]) == 0) {
-            try {
-                var updated = new Bindings(new Bindings.Bind((Bindings.Key) addKey.getSelectedItem(),
-                        (Bindings.Modifiers) addModifier.getSelectedItem()),
-                        new Bindings.Bind((Bindings.Key) subtractKey.getSelectedItem(),
-                                (Bindings.Modifiers) subtractModifier.getSelectedItem()));
-                updated.save(settingsFile);
-                binds = updated;
-                restartHotkeys();
-                return;
-            } catch (IOException | IllegalArgumentException error) {
-                JOptionPane.showMessageDialog(window, error.getMessage(), "Configurar atalhos",
-                        JOptionPane.WARNING_MESSAGE);
+        stopHotkeys();
+        try {
+            while (JOptionPane.showOptionDialog(window, options, "Configurar atalhos", JOptionPane.DEFAULT_OPTION,
+                    JOptionPane.PLAIN_MESSAGE, null, choices, choices[0]) == 0) {
+                try {
+                    var updated = new Bindings(new Bindings.Bind((Bindings.Key) addKey.getSelectedItem(),
+                            (Bindings.Modifiers) addModifier.getSelectedItem()),
+                            new Bindings.Bind((Bindings.Key) subtractKey.getSelectedItem(),
+                                    (Bindings.Modifiers) subtractModifier.getSelectedItem()));
+                    updated.save(settingsFile);
+                    binds = updated;
+                    return;
+                } catch (IOException | IllegalArgumentException error) {
+                    JOptionPane.showMessageDialog(window, error.getMessage(), "Configurar atalhos",
+                            JOptionPane.WARNING_MESSAGE);
+                }
             }
+        } finally {
+            restartHotkeys();
         }
+    }
+
+    private static JButton captureButton(JComboBox<Bindings.Key> keys, JComboBox<Bindings.Modifiers> modifiers) {
+        final String prompt = "Premir tecla";
+        var capture = new JButton(prompt);
+        capture.addActionListener(event -> {
+            capture.setText("À espera da tecla…");
+            capture.requestFocusInWindow();
+        });
+        capture.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent event) {
+                capture.setText(prompt);
+            }
+        });
+        capture.addKeyListener(new KeyAdapter() {
+            @Override
+            public void keyPressed(KeyEvent event) {
+                if (prompt.equals(capture.getText())) {
+                    return;
+                }
+                int code = event.getKeyCode();
+                if (code == KeyEvent.VK_SHIFT || code == KeyEvent.VK_CONTROL || code == KeyEvent.VK_ALT) {
+                    return;
+                }
+                if (code == KeyEvent.VK_ESCAPE) {
+                    capture.setText(prompt);
+                } else {
+                    var key = Bindings.KEYS.stream().filter(candidate -> candidate.code() == code).findFirst();
+                    if (key.isEmpty() || event.isMetaDown() || event.isAltGraphDown()) {
+                        capture.setText("Tenta outra tecla");
+                    } else {
+                        int pressed = event.getModifiersEx();
+                        int flags = ((pressed & InputEvent.CTRL_DOWN_MASK) != 0 ? 2 : 0)
+                                | ((pressed & InputEvent.ALT_DOWN_MASK) != 0 ? 1 : 0)
+                                | ((pressed & InputEvent.SHIFT_DOWN_MASK) != 0 ? 4 : 0);
+                        keys.setSelectedItem(key.get());
+                        for (var modifier : Bindings.Modifiers.values()) {
+                            if (modifier.flags == flags) {
+                                modifiers.setSelectedItem(modifier);
+                                break;
+                            }
+                        }
+                        capture.setText(prompt);
+                    }
+                }
+                event.consume();
+            }
+        });
+        return capture;
     }
 
     private void updateMembership(boolean active) {
@@ -141,8 +205,8 @@ public final class Main {
         restartHotkeys();
     }
 
-    private void restartHotkeys() {
-        long generation = ++shortcutGeneration;
+    private void stopHotkeys() {
+        shortcutGeneration++;
         if (addHotkey != null) {
             addHotkey.close();
             subtractHotkey.close();
@@ -151,6 +215,11 @@ public final class Main {
             addHotkey = null;
             subtractHotkey = null;
         }
+    }
+
+    private void restartHotkeys() {
+        stopHotkeys();
+        long generation = shortcutGeneration;
         addAvailable = true;
         subtractAvailable = true;
         if (joined) {
