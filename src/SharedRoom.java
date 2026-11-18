@@ -70,12 +70,13 @@ final class SharedRoom implements AutoCloseable {
         return invitation.link();
     }
 
-    synchronized void adjust(int amount) {
+    synchronized long adjust(int amount) {
         long next = Math.clamp(contribution.total() + amount, 0, MAX_CONTRIBUTION);
         if (next != contribution.total()) {
             contribution = new Contribution(contribution.revision() + 1, next);
             wake.release();
         }
+        return contribution.total();
     }
 
     private synchronized Contribution snapshot() {
