@@ -29,7 +29,7 @@ public final class Main {
     private final JButton monitorButton = new JButton("Iniciar contagem");
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
-    private final JButton subtractButton = new JButton("−1");
+    private final JButton subtractButton = new JButton("Remover 1 baú");
     private final JCheckBox shortcut = new JCheckBox("Atalho global F9 (+1)", true);
     private final JSlider sensitivity = new JSlider(65, 95, 80);
     private final CounterStore store;
@@ -119,7 +119,7 @@ public final class Main {
         });
         calibrateButton.addActionListener(event -> startCalibration());
         addButton.setToolTipText("Adicionar um baú manualmente");
-        subtractButton.setToolTipText("Corrigir uma contagem desta sessão");
+        subtractButton.setToolTipText("Retira um baú do total e da sessão se ainda houver baús nesta sessão.");
         addButton.addActionListener(event -> changeCount(1));
         subtractButton.addActionListener(event -> changeCount(-1));
         actions.add(calibrateButton);
@@ -205,7 +205,7 @@ public final class Main {
         totalLabel.setText(String.valueOf(state.total()));
         int count = state.references().size();
         samplesLabel.setText(count == 1 ? "1 amostra guardada" : count + " amostras guardadas");
-        subtractButton.setEnabled(session > 0);
+        subtractButton.setEnabled(state.total() > 0);
         monitorButton.setEnabled(!recording && count > 0);
         monitorButton.setText(task != null && !recording ? "Pausar contagem" : "Iniciar contagem");
         calibrateButton.setEnabled(!recording);
@@ -223,11 +223,12 @@ public final class Main {
     }
 
     private void changeCount(int amount) {
-        if (session + amount < 0 || (amount > 0 && state.total() > Long.MAX_VALUE - amount)) {
+        if ((amount < 0 && state.total() < -(long) amount)
+                || (amount > 0 && state.total() > Long.MAX_VALUE - amount)) {
             return;
         }
         if (save(new CounterStore.State(state.total() + amount, state.references()))) {
-            session += amount;
+            session = Math.max(0, session + amount);
             refresh();
         }
     }
