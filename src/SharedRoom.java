@@ -1,13 +1,13 @@
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
-import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.security.SecureRandom;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
 import javax.crypto.Cipher;
+import javax.crypto.AEADBadTagException;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
@@ -19,14 +19,15 @@ final class SharedRoom implements AutoCloseable {
     private static final int STATS_BYTES = 32;
     private static final int TIMEOUT_MS = 3500;
     private static final int STATS_TIMEOUT_MS = 750;
+    private static final long STATS_INTERVAL_NS = TimeUnit.SECONDS.toNanos(3);
     private final Invite invitation;
     private final Server server;
-    private final RoomHistory history;
+    private final RoomScore score;
     private final Thread client;
     private final Semaphore wake = new Semaphore(0);
 
-    record View(long total, boolean online, RoomHistory.Games team, String issue) {
-        View(long total, boolean online, RoomHistory.Games team) {
+    record View(long total, boolean online, RoomScore.Games team, String issue) {
+        View(long total, boolean online, RoomScore.Games team) {
             this(total, online, team, null);
         }
     }
@@ -52,37 +53,17 @@ final class SharedRoom implements AutoCloseable {
         }
     }
 
-    static SharedRoom host(String address, int port, Path file, Consumer<View> update) throws IOException {
+    static SharedRoom host(String address, int port, Consumer<View> update) throws IOException {
         byte[] key = new byte[32];
         RANDOM.nextBytes(key);
         ServerSocket socket = listen(address, port);
-        try {
-            var invite = new Invite(address, socket.getLocalPort(), key);
-            var history = RoomHistory.create(file, invite.link(), true);
-            return new SharedRoom(invite, history, new Server(socket, key, history), update);
-        } catch (IOException | RuntimeException error) {
-            socket.close();
-            throw error;
-        }
+        var invite = new Invite(address, socket.getLocalPort(), key);
+        var score = new RoomScore(true);
+        return new SharedRoom(invite, score, new Server(socket, key, score), update);
     }
 
-    static SharedRoom join(String invitation, Path file, Consumer<View> update) throws IOException {
-        var invite = Invite.parse(invitation);
-        return new SharedRoom(invite, RoomHistory.create(file, invite.link(), false), null, update);
-    }
-
-    static SharedRoom resume(RoomHistory history, Consumer<View> update) throws IOException {
-        var invite = Invite.parse(history.invite);
-        var socket = history.host ? listen(invite.host(), invite.port()) : null;
-        try {
-            history.setResume(true);
-        } catch (IOException error) {
-            if (socket != null) {
-                socket.close();
-            }
-            throw error;
-        }
-        return new SharedRoom(invite, history, socket == null ? null : new Server(socket, invite.key(), history), update);
+    static SharedRoom join(String invitation, Consumer<View> update) {
+        return new SharedRoom(Invite.parse(invitation), new RoomScore(false), null, update);
     }
 
     private static ServerSocket listen(String address, int port) throws IOException {
@@ -96,9 +77,9 @@ final class SharedRoom implements AutoCloseable {
         }
     }
 
-    private SharedRoom(Invite invitation, RoomHistory history, Server server, Consumer<View> update) {
+    private SharedRoom(Invite invitation, RoomScore score, Server server, Consumer<View> update) {
         this.invitation = invitation;
-        this.history = history;
+        this.score = score;
         this.server = server;
         client = Thread.ofPlatform().daemon().name("Contagem em grupo").start(() -> sync(update));
     }
@@ -107,31 +88,42 @@ final class SharedRoom implements AutoCloseable {
         return invitation.link();
     }
 
-    long adjust(int amount) throws IOException {
-        long total = history.adjust(amount);
+    long adjust(int amount) {
+        long total = score.adjust(amount);
         wake.release();
         return total;
     }
 
-    RoomHistory history() {
-        return history;
+    RoomScore score() {
+        return score;
     }
 
     private void sync(Consumer<View> update) {
         View previous = null;
+        long nextStats = System.nanoTime();
+        RoomScore.Games remoteTeam = null;
         while (!Thread.currentThread().isInterrupted()) {
             View view;
             try {
-                if (history.host) {
-                    var score = history.score();
-                    view = new View(score.total(), true, score.team());
+                if (score.host) {
+                    var totals = score.totals();
+                    view = new View(totals.total(), true, totals.team());
                 } else {
-                    view = query(history.own());
-                    history.received(view.total(), view.team());
+                    long total = queryTotal();
+                    long now = System.nanoTime();
+                    if (now - nextStats >= 0) {
+                        var games = queryTeam();
+                        if (games != null) {
+                            remoteTeam = games;
+                        }
+                        nextStats = now + STATS_INTERVAL_NS;
+                    }
+                    score.received(total, remoteTeam);
+                    view = new View(total, true, remoteTeam);
                 }
             } catch (IOException | GeneralSecurityException | IllegalArgumentException error) {
-                var score = history.score();
-                view = new View(score.total(), false, score.team(), connectionIssue(error));
+                var totals = score.totals();
+                view = new View(totals.total(), false, totals.team(), connectionIssue(error));
             }
             if (!view.equals(previous)) {
                 update.accept(view);
@@ -157,35 +149,42 @@ final class SharedRoom implements AutoCloseable {
         };
     }
 
-    private View query(RoomHistory.Contribution snapshot) throws IOException, GeneralSecurityException {
+    private long queryTotal() throws IOException, GeneralSecurityException {
         try (var socket = new Socket()) {
             socket.connect(new InetSocketAddress(invitation.host(), invitation.port()), TIMEOUT_MS);
             socket.setSoTimeout(TIMEOUT_MS);
             long nonce = RANDOM.nextLong();
-            byte[] request = ByteBuffer.allocate(REQUEST_BYTES)
-                    .putLong(history.id.getMostSignificantBits()).putLong(history.id.getLeastSignificantBits())
-                    .putLong(snapshot.revision()).putLong(snapshot.total()).putLong(nonce).array();
-            send(socket, invitation.key(), request, (byte) 1);
+            send(socket, invitation.key(), request(nonce), (byte) 1);
             var response = receive(socket, invitation.key(), RESPONSE_BYTES, (byte) 2);
             if (response.getLong() != nonce) {
                 throw new IOException("Resposta da sala inválida.");
             }
-            long total = response.getLong();
-            // The authenticated total is sufficient to establish that the room is online.
-            try {
-                socket.setSoTimeout(STATS_TIMEOUT_MS);
-                var stats = receive(socket, invitation.key(), STATS_BYTES, (byte) 3);
-                if (stats.getLong() == nonce) {
-                    var games = new RoomHistory.Games(stats.getLong(), stats.getLong(), stats.getLong());
-                    if (games.valid()) {
-                        return new View(total, true, games);
-                    }
-                }
-            } catch (IOException | GeneralSecurityException missingStats) {
-                // Legacy hosts or a relay may omit or delay the optional statistics packet.
-            }
-            return new View(total, true, null);
+            return response.getLong();
         }
+    }
+
+    private RoomScore.Games queryTeam() {
+        try (var socket = new Socket()) {
+            socket.connect(new InetSocketAddress(invitation.host(), invitation.port()), STATS_TIMEOUT_MS);
+            socket.setSoTimeout(STATS_TIMEOUT_MS);
+            long nonce = RANDOM.nextLong();
+            send(socket, invitation.key(), request(nonce), (byte) 4);
+            var reply = receive(socket, invitation.key(), STATS_BYTES, (byte) 3);
+            if (reply.getLong() == nonce) {
+                var games = new RoomScore.Games(reply.getLong(), reply.getLong(), reply.getLong());
+                return games.valid() ? games : null;
+            }
+        } catch (IOException | GeneralSecurityException unavailable) {
+            // Hosts without statistics still answer the original count request.
+        }
+        return null;
+    }
+
+    private byte[] request(long nonce) {
+        var own = score.own();
+        return ByteBuffer.allocate(REQUEST_BYTES)
+                .putLong(score.id.getMostSignificantBits()).putLong(score.id.getLeastSignificantBits())
+                .putLong(own.revision()).putLong(own.total()).putLong(nonce).array();
     }
 
     private static void send(Socket socket, byte[] key, byte[] message, byte type)
@@ -202,13 +201,23 @@ final class SharedRoom implements AutoCloseable {
 
     private static ByteBuffer receive(Socket socket, byte[] key, int bytes, byte type)
             throws IOException, GeneralSecurityException {
+        return receivePacket(socket, bytes).decode(key, type);
+    }
+
+    private record EncryptedPacket(byte[] iv, byte[] data) {
+        ByteBuffer decode(byte[] key, byte type) throws GeneralSecurityException {
+            return ByteBuffer.wrap(cipher(Cipher.DECRYPT_MODE, key, iv, type).doFinal(data));
+        }
+    }
+
+    private static EncryptedPacket receivePacket(Socket socket, int bytes) throws IOException {
         var input = socket.getInputStream();
         byte[] iv = input.readNBytes(12);
         byte[] encrypted = input.readNBytes(bytes + 16);
         if (iv.length != 12 || encrypted.length != bytes + 16) {
             throw new EOFException();
         }
-        return ByteBuffer.wrap(cipher(Cipher.DECRYPT_MODE, key, iv, type).doFinal(encrypted));
+        return new EncryptedPacket(iv, encrypted);
     }
 
     private static Cipher cipher(int mode, byte[] key, byte[] iv, byte type) throws GeneralSecurityException {
@@ -220,7 +229,6 @@ final class SharedRoom implements AutoCloseable {
 
     @Override
     public void close() {
-        history.close();
         client.interrupt();
         if (server != null) {
             server.close();
@@ -232,12 +240,12 @@ final class SharedRoom implements AutoCloseable {
         private final byte[] key;
         private final ExecutorService workers = new ThreadPoolExecutor(0, 8, 30, TimeUnit.SECONDS,
                 new SynchronousQueue<>(), Thread.ofVirtual().factory());
-        private final RoomHistory history;
+        private final RoomScore score;
 
-        Server(ServerSocket socket, byte[] key, RoomHistory history) {
+        Server(ServerSocket socket, byte[] key, RoomScore score) {
             this.key = key;
             this.socket = socket;
-            this.history = history;
+            this.score = score;
             Thread.ofPlatform().daemon().name("Anfitrião da sala").start(this::accept);
         }
 
@@ -259,20 +267,26 @@ final class SharedRoom implements AutoCloseable {
         private void handle(Socket connection) {
             try (connection) {
                 connection.setSoTimeout(TIMEOUT_MS);
-                var request = receive(connection, key, REQUEST_BYTES, (byte) 1);
+                var packet = receivePacket(connection, REQUEST_BYTES);
+                ByteBuffer request;
+                try {
+                    request = packet.decode(key, (byte) 1);
+                } catch (AEADBadTagException maybeStats) {
+                    var stats = packet.decode(key, (byte) 4);
+                    long nonce = stats.getLong(REQUEST_BYTES - Long.BYTES);
+                    var games = score.totals().team();
+                    byte[] reply = ByteBuffer.allocate(STATS_BYTES).putLong(nonce).putLong(games.completed())
+                            .putLong(games.chests()).putLong(games.baseline()).array();
+                    send(connection, key, reply, (byte) 3);
+                    return;
+                }
                 var id = new UUID(request.getLong(), request.getLong());
-                var contribution = new RoomHistory.Contribution(request.getLong(), request.getLong());
+                var contribution = new RoomScore.Contribution(request.getLong(), request.getLong());
                 long nonce = request.getLong();
-                var score = history.accept(id, contribution);
+                var totals = score.accept(id, contribution);
                 byte[] response = ByteBuffer.allocate(RESPONSE_BYTES).putLong(nonce)
-                        .putLong(score.total()).array();
-                var stats = score.team();
-                byte[] extension = ByteBuffer.allocate(STATS_BYTES).putLong(nonce).putLong(stats.completed())
-                        .putLong(stats.chests()).putLong(stats.baseline()).array();
-                byte[] totalPacket = packet(key, response, (byte) 2);
-                byte[] statsPacket = packet(key, extension, (byte) 3);
-                connection.getOutputStream().write(ByteBuffer.allocate(totalPacket.length + statsPacket.length)
-                        .put(totalPacket).put(statsPacket).array());
+                        .putLong(totals.total()).array();
+                send(connection, key, response, (byte) 2);
             } catch (IOException | GeneralSecurityException invalid) {
                 // Drop unauthenticated, invalid, or incomplete requests.
             }

@@ -26,15 +26,9 @@ Na mesma rede local, o convite funciona diretamente. Cada jogador pode retirar a
 
 - Quando começares uma nova partida, clica em **Nova partida pessoal** e confirma. Os teus baús nessa partida entram na tua média e o teu contador volta a zero. O **Total do grupo** mantém-se.
 - Para contar uma partida na média da equipa, o anfitrião clica em **Nova partida da equipa** e confirma uma vez por partida, depois de o total estar sincronizado. A aplicação regista os baús adicionados pela equipa desde a marcação anterior. Os contadores pessoais e o total do grupo mantêm-se.
-- As médias usam só partidas terminadas, incluindo partidas com zero baús. As salas guardadas na versão 3.2 mantêm o total acumulado, mas as médias começam a ser calculadas a partir desta atualização.
+- As médias usam só partidas terminadas, incluindo partidas com zero baús.
 
-### Retomar a última sala
-
-Quando fechas a aplicação, o último total do grupo e a tua contribuição ficam guardados neste PC. Ao abrir novamente, o contador tenta retomar a mesma sala. Se usaste **Sair da sala**, podes voltar em **Contagem em grupo → Retomar última sala**. Criar ou entrar noutra sala substitui a última guardada.
-
-O anfitrião precisa de reabrir a aplicação para os outros jogadores voltarem a sincronizar. Se estiver desligado, os convidados veem o último total recebido. Se o endereço local do anfitrião ou o endereço público do túnel TCP mudar, a ligação anterior pode deixar de funcionar.
-
-A gravação da sala começa na versão **3.2.0**. As versões anteriores não guardavam as salas após fechar.
+A sala, a contagem e as médias são temporárias. Quando o anfitrião fecha a aplicação, a sala termina. Na próxima vez, cria uma nova sala e partilha um novo convite.
 
 ### Jogar pela internet sem VPN
 
