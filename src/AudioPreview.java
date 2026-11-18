@@ -18,6 +18,15 @@ final class AudioPreview implements AutoCloseable {
         return pcm;
     }
 
+    static float[] fromPcm(byte[] pcm) {
+        float[] samples = new float[pcm.length / 2];
+        for (int i = 0; i < samples.length; i++) {
+            short value = (short) ((pcm[i * 2] & 255) | (pcm[i * 2 + 1] << 8));
+            samples[i] = value / 32768f;
+        }
+        return samples;
+    }
+
     void play(Component owner, byte[] pcm) {
         close();
         try {

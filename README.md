@@ -55,10 +55,12 @@ Se o contador falhar aberturas, experimenta mover a sensibilidade para a esquerd
 
 ### Confirmar que som está a ser usado
 
-- **Rever amostras** lista os trechos guardados. Seleciona um e clica em **Ouvir amostra**. As amostras de versões anteriores continuam a ser usadas na deteção. Para as ouvires, grava-as novamente, porque essas versões só guardavam os dados usados na comparação.
+- **Rever amostras** lista os trechos guardados. Seleciona um e clica em **Ouvir amostra**, **Editar trecho** ou **Remover amostra**.
+- Em **Editar trecho**, ajusta **Início** e **Fim** e clica em **Guardar amostra**. As novas gravações permitem alargar o recorte dentro do áudio original. Nas amostras da versão 1.4.0, só podes editar dentro do trecho que ficou guardado. As amostras anteriores à 1.4.0 podem ser removidas, mas precisas de as gravar novamente para as ouvir ou editar.
+- Em **Remover amostra**, confirma a remoção. A amostra deixa de ser usada na deteção e a contagem de baús fica igual. Se removeres a última, grava outra para retomar a deteção automática.
 - **Ouvir áudio recebido** capta os próximos cinco segundos da saída predefinida do Windows. Reproduz som no Fortnite enquanto a captura decorre e depois clica em **Reproduzir gravação**. Esta gravação é temporária. A aplicação pausa a contagem durante o teste e retoma-a quando fechas a janela, se já estava ativa.
 
-A deteção usa o áudio reproduzido na saída predefinida do Windows. Outros sons nessa saída, como música, chat de voz e efeitos do jogo, podem interferir. O total, as referências acústicas e os novos trechos selecionados ficam guardados localmente em `%LOCALAPPDATA%\ContadorDeBaus`.
+A deteção usa o áudio reproduzido na saída predefinida do Windows. Outros sons nessa saída, como música, chat de voz e efeitos do jogo, podem interferir. O total, as referências acústicas, as gravações de calibração e os respetivos recortes ficam guardados localmente em `%LOCALAPPDATA%\ContadorDeBaus`.
 
 ## Compilar
 

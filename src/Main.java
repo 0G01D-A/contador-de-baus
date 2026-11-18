@@ -16,7 +16,6 @@ public final class Main {
     private static final Color INK = new Color(23, 29, 43);
     private static final Color MUTED = new Color(78, 91, 114);
     private static final Color BLUE = new Color(38, 74, 182);
-    private static final int RECORD_SECONDS = 7;
     private static final int PREVIEW_SECONDS = 5;
     private final JFrame window = new JFrame("Contador de Baús");
     private final JLabel sessionLabel = label("0", 42, BLUE);
@@ -346,7 +345,7 @@ public final class Main {
             countdown.stop();
             countdown = null;
             status.setText("A gravar. Abre um baú agora.");
-            record(RECORD_SECONDS, clip -> finishCalibration(clip, resume));
+            record(CounterStore.RECORDING_SECONDS, clip -> finishCalibration(clip, resume));
         });
         countdown.start();
     }
@@ -377,7 +376,10 @@ public final class Main {
             showError("A gravação está sem som. Verifica se o Fortnite usa a saída predefinida do Windows.");
         } else {
             window.toFront();
-            CounterStore.Sample sample = new CalibrationDialog(window, clip).choose();
+            int samplesPerMs = WindowsAudio.SAMPLE_RATE / 1000;
+            float[] wholeMilliseconds = Arrays.copyOf(clip, clip.length / samplesPerMs * samplesPerMs);
+            CounterStore.Sample sample = new CalibrationDialog(window, AudioPreview.toPcm(wholeMilliseconds),
+                    -1, -1).choose();
             if (sample != null) {
                 List<CounterStore.Sample> samples = new ArrayList<>(state.samples());
                 if (samples.size() == CounterStore.MAX_REFERENCES) {
@@ -404,38 +406,88 @@ public final class Main {
         stopTask();
         status.setText("Contagem em pausa durante a reprodução.");
         try (var preview = new AudioPreview()) {
-            List<CounterStore.Sample> samples = state.samples();
             var list = new DefaultListModel<String>();
-            for (int i = 0; i < samples.size(); i++) {
-                byte[] pcm = samples.get(i).pcm();
-                String duration = pcm == null ? "sem gravação original"
-                        : "%.2f s".formatted(pcm.length / (2.0 * WindowsAudio.SAMPLE_RATE));
-                list.addElement("Amostra " + (i + 1) + " · " + duration);
-            }
             var choices = new JList<>(list);
             choices.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
             var details = new JLabel();
             var listen = new JButton("Ouvir amostra");
-            choices.addListSelectionListener(event -> {
+            var edit = new JButton("Editar trecho");
+            var remove = new JButton("Remover amostra");
+            Runnable updateControls = () -> {
                 preview.close();
                 int index = choices.getSelectedIndex();
-                boolean available = index >= 0 && samples.get(index).pcm() != null;
+                boolean selected = index >= 0 && index < state.samples().size();
+                boolean available = selected && state.samples().get(index).recording() != null;
                 listen.setEnabled(available);
-                details.setText(available ? "Trecho usado para reconhecer o som do baú."
-                        : "A amostra antiga ainda deteta sons. Volta a gravá-la para a poderes ouvir.");
+                edit.setEnabled(available);
+                remove.setEnabled(selected);
+                if (!selected) {
+                    details.setText("Não há nenhuma amostra selecionada.");
+                } else if (available) {
+                    details.setText("Trecho usado para reconhecer o som do baú.");
+                } else {
+                    details.setText("Só foi guardada a referência acústica. Grava novamente para poderes editar.");
+                }
+            };
+            choices.addListSelectionListener(event -> updateControls.run());
+            listen.addActionListener(event -> preview.play(choices,
+                    state.samples().get(choices.getSelectedIndex()).selectedAudio()));
+            edit.addActionListener(event -> {
+                preview.close();
+                int index = choices.getSelectedIndex();
+                CounterStore.Sample sample = state.samples().get(index);
+                CounterStore.Sample edited = new CalibrationDialog(SwingUtilities.getWindowAncestor(choices),
+                        sample.recording(), sample.startMs(), sample.endMs()).choose();
+                if (edited != null) {
+                    List<CounterStore.Sample> samples = new ArrayList<>(state.samples());
+                    samples.set(index, edited);
+                    if (save(new CounterStore.State(state.total(), samples))) {
+                        refreshSampleList(list, choices, index);
+                    }
+                }
             });
-            listen.addActionListener(event -> preview.play(choices, samples.get(choices.getSelectedIndex()).pcm()));
-            choices.setSelectedIndex(0);
+            remove.addActionListener(event -> {
+                preview.close();
+                int index = choices.getSelectedIndex();
+                int answer = JOptionPane.showConfirmDialog(choices,
+                        "Remover a amostra " + (index + 1) + " e deixar de a usar na deteção?",
+                        "Remover amostra", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+                if (answer == JOptionPane.YES_OPTION) {
+                    List<CounterStore.Sample> samples = new ArrayList<>(state.samples());
+                    samples.remove(index);
+                    if (save(new CounterStore.State(state.total(), samples))) {
+                        refreshSampleList(list, choices, index);
+                        updateControls.run();
+                    }
+                }
+            });
+            refreshSampleList(list, choices, 0);
             JPanel panel = new JPanel(new BorderLayout(0, 8));
             panel.add(new JScrollPane(choices), BorderLayout.CENTER);
             JPanel controls = new JPanel(new BorderLayout(0, 6));
             controls.add(details, BorderLayout.CENTER);
-            controls.add(listen, BorderLayout.SOUTH);
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT));
+            actions.add(listen);
+            actions.add(edit);
+            actions.add(remove);
+            controls.add(actions, BorderLayout.SOUTH);
             panel.add(controls, BorderLayout.SOUTH);
             JOptionPane.showMessageDialog(window, panel, "Amostras guardadas", JOptionPane.PLAIN_MESSAGE);
         } finally {
             resumeAfterPreview(resume);
         }
+    }
+
+    private void refreshSampleList(DefaultListModel<String> list, JList<String> choices, int selected) {
+        list.clear();
+        for (int i = 0; i < state.samples().size(); i++) {
+            CounterStore.Sample sample = state.samples().get(i);
+            String duration = sample.recording() == null ? "sem gravação original"
+                    : "%.2f s".formatted((sample.endMs() - sample.startMs()) / 1000.0);
+            list.addElement("Amostra " + (i + 1) + " · " + duration);
+        }
+        choices.setSelectedIndex(Math.min(selected, list.size() - 1));
+        refresh();
     }
 
     private void previewReceivedAudio() {
@@ -467,7 +519,7 @@ public final class Main {
         if (!window.isDisplayable()) {
             return;
         }
-        if (resume) {
+        if (resume && !state.samples().isEmpty()) {
             startMonitoring();
         } else {
             showIdleStatus();
@@ -521,6 +573,7 @@ public final class Main {
     @SuppressWarnings("serial")
     private static final class CalibrationDialog extends JDialog {
         private static final int SAMPLES_PER_MS = WindowsAudio.SAMPLE_RATE / 1000;
+        private final byte[] recording;
         private final float[] audio;
         private final JPanel waveform;
         private final JSlider from;
@@ -532,9 +585,10 @@ public final class Main {
         private final AudioPreview preview = new AudioPreview();
         private CounterStore.Sample result;
 
-        CalibrationDialog(JFrame owner, float[] audio) {
-            super(owner, "Selecionar som do baú", true);
-            this.audio = audio;
+        CalibrationDialog(Window owner, byte[] recording, int initialStart, int initialEnd) {
+            super(owner, initialStart < 0 ? "Selecionar som do baú" : "Editar trecho", ModalityType.APPLICATION_MODAL);
+            this.recording = recording;
+            audio = AudioPreview.fromPcm(recording);
             int duration = audio.length / SAMPLES_PER_MS;
             int loudest = 0;
             for (int i = 1; i < audio.length; i++) {
@@ -543,8 +597,8 @@ public final class Main {
                 }
             }
             int start = Math.clamp(loudest / SAMPLES_PER_MS - 350, 0, Math.max(0, duration - 1500));
-            from = new JSlider(0, duration, start);
-            to = new JSlider(0, duration, Math.min(duration, start + 1500));
+            from = new JSlider(0, duration, initialStart < 0 ? start : initialStart);
+            to = new JSlider(0, duration, initialEnd < 0 ? Math.min(duration, start + 1500) : initialEnd);
             for (int i = 0; i < audio.length; i++) {
                 int bar = i * bars.length / audio.length;
                 bars[bar] = Math.max(bars[bar], Math.abs(audio[i]));
@@ -589,7 +643,8 @@ public final class Main {
             save.addActionListener(event -> {
                 try {
                     float[] samples = selection();
-                    result = new CounterStore.Sample(ChestDetector.reference(samples), AudioPreview.toPcm(samples));
+                    result = new CounterStore.Sample(ChestDetector.reference(samples), this.recording,
+                            from.getValue(), to.getValue());
                     dispose();
                 } catch (IllegalArgumentException error) {
                     JOptionPane.showMessageDialog(this, error.getMessage(), "Amostra", JOptionPane.WARNING_MESSAGE);

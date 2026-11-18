@@ -1,15 +1,18 @@
 import java.io.*;
 import java.nio.file.*;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 final class CounterStore {
     static final int MAX_REFERENCES = 6;
     static final int MIN_CLIP_MS = 600;
     static final int MAX_CLIP_MS = 2500;
+    static final int RECORDING_SECONDS = 7;
+    static final int PCM_BYTES_PER_MS = WindowsAudio.SAMPLE_RATE / 1000 * 2;
     private static final int FINGERPRINT_ONLY_FORMAT = 0x46434301;
-    private static final int FORMAT = 0x46434302;
-    private static final int PCM_BYTES_PER_MS = WindowsAudio.SAMPLE_RATE / 1000 * 2;
+    private static final int TRIMMED_AUDIO_FORMAT = 0x46434302;
+    private static final int FORMAT = 0x46434303;
     private final Path file;
 
     CounterStore(Path directory) throws IOException {
@@ -17,7 +20,11 @@ final class CounterStore {
         file = directory.resolve("contador.dat");
     }
 
-    record Sample(float[][] fingerprint, byte[] pcm) {}
+    record Sample(float[][] fingerprint, byte[] recording, int startMs, int endMs) {
+        byte[] selectedAudio() {
+            return Arrays.copyOfRange(recording, startMs * PCM_BYTES_PER_MS, endMs * PCM_BYTES_PER_MS);
+        }
+    }
 
     record State(long total, List<Sample> samples) {
         State {
@@ -31,7 +38,7 @@ final class CounterStore {
         }
         try (var input = new DataInputStream(new BufferedInputStream(Files.newInputStream(file)))) {
             int version = input.readInt();
-            if (version != FORMAT && version != FINGERPRINT_ONLY_FORMAT) {
+            if (version != FORMAT && version != TRIMMED_AUDIO_FORMAT && version != FINGERPRINT_ONLY_FORMAT) {
                 throw new IOException("Formato de dados desconhecido.");
             }
             long total = input.readLong();
@@ -61,18 +68,28 @@ final class CounterStore {
                     throw new IOException("Amostra sem som.");
                 }
                 byte[] pcm = null;
-                if (version == FORMAT) {
+                int startMs = 0;
+                int endMs = 0;
+                if (version != FINGERPRINT_ONLY_FORMAT) {
                     int bytes = input.readInt();
                     if (bytes != 0) {
-                        if (bytes < MIN_CLIP_MS * PCM_BYTES_PER_MS || bytes > MAX_CLIP_MS * PCM_BYTES_PER_MS
-                                || bytes % 2 != 0) {
+                        int maxRecordingMs = version == FORMAT ? RECORDING_SECONDS * 1000 : MAX_CLIP_MS;
+                        if (bytes < MIN_CLIP_MS * PCM_BYTES_PER_MS || bytes > maxRecordingMs * PCM_BYTES_PER_MS
+                                || bytes % PCM_BYTES_PER_MS != 0) {
                             throw new IOException("Duração da gravação inválida.");
                         }
                         pcm = new byte[bytes];
                         input.readFully(pcm);
+                        int recordingMs = bytes / PCM_BYTES_PER_MS;
+                        startMs = version == FORMAT ? input.readInt() : 0;
+                        endMs = version == FORMAT ? input.readInt() : recordingMs;
+                        if (startMs < 0 || endMs > recordingMs || endMs < startMs
+                                || endMs - startMs < MIN_CLIP_MS || endMs - startMs > MAX_CLIP_MS) {
+                            throw new IOException("Trecho de amostra inválido.");
+                        }
                     }
                 }
-                samples.add(new Sample(reference, pcm));
+                samples.add(new Sample(reference, pcm, startMs, endMs));
             }
             return new State(total, samples);
         }
@@ -93,10 +110,12 @@ final class CounterStore {
                             output.writeFloat(value);
                         }
                     }
-                    byte[] pcm = sample.pcm();
+                    byte[] pcm = sample.recording();
                     output.writeInt(pcm == null ? 0 : pcm.length);
                     if (pcm != null) {
                         output.write(pcm);
+                        output.writeInt(sample.startMs());
+                        output.writeInt(sample.endMs());
                     }
                 }
             }
