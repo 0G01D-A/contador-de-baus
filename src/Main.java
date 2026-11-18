@@ -29,6 +29,7 @@ public final class Main {
     private final JButton calibrateButton = new JButton("Gravar som de baú");
     private final JButton addButton = new JButton("+1");
     private final JButton subtractButton = new JButton("Remover 1 baú");
+    private final JButton resetButton = new JButton("Repor contagem");
     private final JButton reviewButton = new JButton("Rever amostras");
     private final JButton previewButton = new JButton("Ouvir áudio recebido");
     private final JCheckBox addShortcut = new JCheckBox("Atalho global F9 (+1)", true);
@@ -108,7 +109,12 @@ public final class Main {
         scores.setOpaque(false);
         scores.setAlignmentX(Component.LEFT_ALIGNMENT);
         scores.add(scoreCard("Nesta sessão", sessionLabel));
-        scores.add(scoreCard("Total guardado", totalLabel));
+        JPanel totalCard = scoreCard("Total guardado", totalLabel);
+        resetButton.setAlignmentX(Component.LEFT_ALIGNMENT);
+        resetButton.addActionListener(event -> resetCount());
+        totalCard.add(Box.createVerticalStrut(4));
+        totalCard.add(resetButton);
+        scores.add(totalCard);
         content.add(scores);
         content.add(Box.createVerticalStrut(16));
 
@@ -251,6 +257,7 @@ public final class Main {
         int count = state.samples().size();
         samplesLabel.setText(count == 1 ? "1 amostra guardada" : count + " amostras guardadas");
         subtractButton.setEnabled(state.total() > 0);
+        resetButton.setEnabled(state.total() > 0);
         monitorButton.setEnabled(!recording && count > 0);
         monitorButton.setText(task != null && !recording ? "Pausar contagem" : "Iniciar contagem");
         calibrateButton.setEnabled(!recording);
@@ -276,6 +283,18 @@ public final class Main {
         }
         if (save(new CounterStore.State(state.total() + amount, state.samples()))) {
             session = Math.max(0, session + amount);
+            refresh();
+        }
+    }
+
+    private void resetCount() {
+        Object[] options = {"Repor contagem", "Cancelar"};
+        int choice = JOptionPane.showOptionDialog(window,
+                "Queres repor a contagem? A sessão e o total guardado vão ficar a zero. As amostras mantêm-se.",
+                "Repor contagem", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE,
+                null, options, options[1]);
+        if (choice == 0 && save(new CounterStore.State(0, state.samples()))) {
+            session = 0;
             refresh();
         }
     }

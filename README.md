@@ -53,6 +53,8 @@ Usa **F9** para adicionar um baú e **F8** para retirar um, mesmo com o Fortnite
 
 Se a aplicação contar um baú a mais, clica em **Remover 1 baú**. Isso retira um do total guardado e reduz a contagem da sessão, se estiver acima de zero. Podes corrigir o total mesmo depois de reabrir a aplicação.
 
+Para começar do zero, clica em **Repor contagem** por baixo de **Total guardado**. Confirma na janela que aparece para repor a sessão e o total. As amostras de som ficam guardadas.
+
 Se o contador falhar aberturas, experimenta mover a sensibilidade para a esquerda. Se contar outros sons, move para a direita. Para reconhecer outro tipo de baú, grava outra amostra da mesma forma. A aplicação guarda as seis mais recentes. Baús abertos durante a calibração podem ser adicionados com **+1**.
 
 ### Confirmar que som está a ser usado
